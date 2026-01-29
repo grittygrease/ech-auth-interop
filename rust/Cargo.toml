@@ -1,0 +1,40 @@
+[package]
+name = "ech-auth"
+version = "0.1.0"
+edition = "2024"
+description = "Authenticated ECH Config Distribution (draft-sullivan-tls-signed-ech-updates)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+thiserror = "2"
+rand = "0.8"
+hex = "0.4"
+x509-cert = "0.2"
+der = "0.7"
+const-oid = "0.9"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+webpki = { package = "rustls-webpki", version = "0.102" }
+
+[dev-dependencies]
+proptest = "1"
+
+[[bin]]
+name = "ech-generate"
+path = "src/bin/ech-generate.rs"
+
+[[bin]]
+name = "ech-sign"
+path = "src/bin/ech-sign.rs"
+
+[[bin]]
+name = "ech-verify"
+path = "src/bin/ech-verify.rs"
+
+[[bin]]
+name = "gen-test-vector"
+path = "src/bin/gen-test-vector.rs"
