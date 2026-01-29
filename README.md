@@ -191,9 +191,38 @@ This tests:
 
 ## Wire Format
 
-Per PR #2, the mechanism uses two extensions:
+This implementation supports two spec versions with different wire formats:
 
-**ech_authinfo** (in initial ECHConfig, via DNS):
+### Method Encoding
+
+| Method | Published (-00) | PR #2 |
+|--------|-----------------|-------|
+| none   | 0               | —     |
+| rpk    | 1               | 0     |
+| pkix   | 2               | 1     |
+
+### Published (-00): Combined Structure
+
+Single `ech_auth` extension used everywhere:
+
+```
+struct {
+    ECHAuthMethod method;              // 1 byte: 0=none, 1=rpk, 2=pkix
+    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
+    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
+    uint64 not_after;                  // 8 bytes: MUST be 0 for PKIX
+    SignatureScheme algorithm;         // 2 bytes
+    opaque signature<1..2^16-1>;
+} ECHAuth;
+```
+
+For PKIX, `not_after` MUST be 0 (certificate validity governs expiration).
+
+### PR #2: Split Structure
+
+Two extensions with different purposes:
+
+**ech_authinfo** (policy, in DNS HTTPS record):
 ```
 struct {
     ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
@@ -201,16 +230,20 @@ struct {
 } ECHAuthInfo;
 ```
 
-**ech_auth** (in retry configs, via TLS):
+**ech_auth** (signature, in TLS retry configs):
 ```
 struct {
-    ECHAuthMethod method;              // 1 byte
-    uint64 not_after;                  // 8 bytes (Unix timestamp)
+    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
+    uint64 not_after;                  // 8 bytes: REQUIRED (even for PKIX)
     opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
     SignatureScheme algorithm;         // 2 bytes
     opaque signature<1..2^16-1>;
-} ECHAuth;
+} ECHAuthRetry;
 ```
+
+Key PR #2 changes:
+- `not_after` is REQUIRED for PKIX (allows replay limiting independent of cert lifetime)
+- Policy (trusted_keys) separated from signature for DNS efficiency
 
 ## Security Considerations
 
