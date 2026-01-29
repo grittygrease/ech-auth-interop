@@ -1,5 +1,6 @@
 use ech_auth::{
     sign_pkix_ecdsa, sign_pkix_ed25519, sign_rpk, sign_rpk_ecdsa, ECHAuth, ECHAuthMethod,
+    SpecVersion,
 };
 use ed25519_dalek::SigningKey;
 use p256::ecdsa::SigningKey as EcdsaSigningKey;
@@ -19,6 +20,7 @@ fn print_usage() {
     eprintln!("  --key FILE              Signing key file (required)");
     eprintln!("  --not-after TIMESTAMP   Unix epoch seconds (required for RPK, ignored for PKIX)");
     eprintln!("  --cert-chain FILE       Certificate chain for PKIX (DER format, required for PKIX)");
+    eprintln!("  --version VER           Wire format: pr2 (default) or published");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut key_file: Option<String> = None;
     let mut not_after: Option<u64> = None;
     let mut cert_chain_file: Option<String> = None;
+    let mut spec_version = SpecVersion::PR2;
 
     let mut i = 1;
     while i < args.len() {
@@ -87,6 +90,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }
                 cert_chain_file = Some(args[i].clone());
+            }
+            "--version" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --version requires an argument");
+                    process::exit(1);
+                }
+                spec_version = match args[i].as_str() {
+                    "pr2" => SpecVersion::PR2,
+                    "published" => SpecVersion::Published,
+                    _ => {
+                        eprintln!("Error: unknown version: {} (use pr2 or published)", args[i]);
+                        process::exit(1);
+                    }
+                };
             }
             "--help" | "-h" => {
                 print_usage();
@@ -170,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Encode and output
-    let encoded = ech_auth.encode();
+    let encoded = ech_auth.encode_versioned(spec_version);
     println!("{}", hex::encode(encoded));
 
     Ok(())

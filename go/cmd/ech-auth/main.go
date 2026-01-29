@@ -78,7 +78,8 @@ Options:
   --config       Path to ECH config (binary)
   --output       Output path
   --trust-anchor SPKI hash in hex (64 chars)
-  --not-after    Expiration timestamp (Unix seconds, default: +24h)`)
+  --not-after    Expiration timestamp (Unix seconds, default: +24h)
+  --version      Wire format: pr2 (default), published`)
 }
 
 func cmdGenerate(args []string) error {
@@ -146,6 +147,7 @@ func cmdSign(args []string) error {
 	configPath := ""
 	output := ""
 	notAfter := time.Now().Add(24 * time.Hour).Unix()
+	specVersion := echauth.SpecPR2
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -177,6 +179,19 @@ func cmdSign(args []string) error {
 				return fmt.Errorf("invalid --not-after: %w", err)
 			}
 			notAfter = ts
+		case "--version":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--version requires a value")
+			}
+			i++
+			switch args[i] {
+			case "pr2":
+				specVersion = echauth.SpecPR2
+			case "published":
+				specVersion = echauth.SpecPublished
+			default:
+				return fmt.Errorf("unknown version: %s (use pr2 or published)", args[i])
+			}
 		}
 	}
 
@@ -226,14 +241,19 @@ func cmdSign(args []string) error {
 	}
 
 	// Encode
-	encoded := auth.Encode()
+	encoded := auth.EncodeVersioned(specVersion)
 
 	if err := os.WriteFile(output, encoded, 0644); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
 
+	versionName := "pr2"
+	if specVersion == echauth.SpecPublished {
+		versionName = "published"
+	}
 	fmt.Printf("Signed ECH config: %s\n", output)
 	fmt.Printf("  Algorithm: Ed25519\n")
+	fmt.Printf("  Version: %s\n", versionName)
 	fmt.Printf("  Not after: %d (%s)\n", notAfter, time.Unix(notAfter, 0).Format(time.RFC3339))
 	fmt.Printf("  SPKI hash: %s\n", keyFile.SPKIHash)
 	fmt.Printf("  Output size: %d bytes\n", len(encoded))
@@ -244,6 +264,7 @@ func cmdSign(args []string) error {
 func cmdVerify(args []string) error {
 	configPath := ""
 	trustAnchorHex := ""
+	specVersion := echauth.SpecPR2
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -259,12 +280,26 @@ func cmdVerify(args []string) error {
 			}
 			i++
 			trustAnchorHex = args[i]
+		case "--version":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--version requires a value")
+			}
+			i++
+			switch args[i] {
+			case "pr2":
+				specVersion = echauth.SpecPR2
+			case "published":
+				specVersion = echauth.SpecPublished
+			default:
+				return fmt.Errorf("unknown version: %s (use pr2 or published)", args[i])
+			}
 		}
 	}
 
 	if configPath == "" || trustAnchorHex == "" {
 		return fmt.Errorf("--config and --trust-anchor are required")
 	}
+	_ = specVersion // Used for decode below
 
 	// Parse trust anchor
 	if len(trustAnchorHex) != 64 {
@@ -284,7 +319,7 @@ func cmdVerify(args []string) error {
 	}
 
 	// Decode
-	auth, err := echauth.Decode(configData)
+	auth, err := echauth.DecodeVersioned(configData, specVersion)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}

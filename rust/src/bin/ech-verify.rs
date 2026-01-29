@@ -1,4 +1,4 @@
-use ech_auth::{verify_pkix, verify_rpk, ECHAuth, ECHAuthMethod, SPKIHash};
+use ech_auth::{verify_pkix_versioned, verify_rpk, ECHAuth, ECHAuthMethod, SPKIHash, SpecVersion};
 use std::io::{self, Read};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +17,7 @@ fn print_usage() {
     eprintln!("  --public-name NAME      Public name for PKIX SAN check (required for PKIX)");
     eprintln!("  --trust-anchor FILE     Trust anchor certificate (DER, for PKIX)");
     eprintln!("  --current-time UNIX     Current Unix timestamp (default: now)");
+    eprintln!("  --version VER           Wire format: pr2 (default) or published");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut public_name: Option<String> = None;
     let mut trust_anchors: Vec<Vec<u8>> = Vec::new();
     let mut current_time: Option<u64> = None;
+    let mut spec_version = SpecVersion::PR2;
 
     let mut i = 1;
     while i < args.len() {
@@ -95,6 +97,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     process::exit(1);
                 }));
             }
+            "--version" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --version requires an argument");
+                    process::exit(1);
+                }
+                spec_version = match args[i].as_str() {
+                    "pr2" => SpecVersion::PR2,
+                    "published" => SpecVersion::Published,
+                    _ => {
+                        eprintln!("Error: unknown version: {} (use pr2 or published)", args[i]);
+                        process::exit(1);
+                    }
+                };
+            }
             "--help" | "-h" => {
                 print_usage();
                 process::exit(0);
@@ -121,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ech_auth_data = hex::decode(stdin_data.trim())?;
 
     // Decode ECHAuth
-    let mut ech_auth = ECHAuth::decode(&ech_auth_data)?;
+    let mut ech_auth = ECHAuth::decode_versioned(&ech_auth_data, spec_version)?;
 
     // Override trusted keys if provided (for RPK)
     if let Some(keys) = trusted_keys_override {
@@ -151,12 +168,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 process::exit(1);
             }
             let trust_anchor_refs: Vec<Vec<u8>> = trust_anchors;
-            verify_pkix(
+            verify_pkix_versioned(
                 &config_tbs,
                 &ech_auth,
                 &public_name.unwrap(),
                 &trust_anchor_refs,
                 current_time,
+                spec_version,
             )
         }
     };

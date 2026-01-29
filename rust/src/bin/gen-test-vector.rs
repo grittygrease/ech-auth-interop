@@ -1,11 +1,10 @@
 //! Generate test vectors for cross-implementation testing
 
 use ech_auth::{
-    sign_rpk, ECHAuth, ECHAuthMethod, ED25519_SIGNATURE_SCHEME,
+    sign_rpk, ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ED25519_SIGNATURE_SCHEME,
 };
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
-use std::io::Write;
 
 fn main() {
     // Use deterministic key for reproducibility
@@ -31,15 +30,31 @@ fn main() {
     hasher.update(&sig.authenticator);
     let spki_hash: [u8; 32] = hasher.finalize().into();
 
-    // Build ECHAuth
+    // Build ECHAuth (combined format)
     let ech_auth = ECHAuth {
         method: ECHAuthMethod::Rpk,
         trusted_keys: vec![spki_hash],
         signature: Some(sig.clone()),
     };
 
-    // Encode
-    let encoded = ech_auth.encode();
+    // Build PR #2 split format
+    let auth_info = ECHAuthInfo {
+        method: ECHAuthMethod::Rpk,
+        trusted_keys: vec![spki_hash],
+    };
+
+    let auth_retry = ECHAuthRetry {
+        method: ECHAuthMethod::Rpk,
+        not_after,
+        authenticator: sig.authenticator.clone(),
+        algorithm: sig.algorithm,
+        signature: sig.signature.clone(),
+    };
+
+    // Encode all formats
+    let combined_encoded = ech_auth.encode();
+    let info_encoded = auth_info.encode();
+    let retry_encoded = auth_retry.encode();
 
     // Output as JSON
     let json = serde_json::json!({
@@ -51,7 +66,11 @@ fn main() {
         "spki_hash_hex": hex::encode(&spki_hash),
         "signature_hex": hex::encode(&sig.signature),
         "algorithm": ED25519_SIGNATURE_SCHEME,
-        "ech_auth_encoded_hex": hex::encode(&encoded),
+        // Combined format (legacy)
+        "ech_auth_encoded_hex": hex::encode(&combined_encoded),
+        // PR #2 split format
+        "auth_info_encoded_hex": hex::encode(&info_encoded),
+        "auth_retry_encoded_hex": hex::encode(&retry_encoded),
     });
 
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
@@ -61,5 +80,7 @@ fn main() {
     eprintln!("  Key: {}", hex::encode(&key_bytes));
     eprintln!("  SPKI hash: {}", hex::encode(&spki_hash));
     eprintln!("  Signature: {} bytes", sig.signature.len());
-    eprintln!("  Encoded: {} bytes", encoded.len());
+    eprintln!("  Combined: {} bytes", combined_encoded.len());
+    eprintln!("  AuthInfo: {} bytes", info_encoded.len());
+    eprintln!("  AuthRetry: {} bytes", retry_encoded.len());
 }
