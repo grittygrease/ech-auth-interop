@@ -191,6 +191,35 @@ This binds the signature to:
 2. The specific ECHConfig being authenticated
 3. The expiration timestamp
 
+## DNS HTTPS Record Format
+
+The `ech_auth` extension is carried inside an ECHConfig, which is then base64-encoded
+in the HTTPS DNS record's `ech` parameter:
+
+```
+example.com. 300 IN HTTPS 1 . alpn=h2,h3 ech=AQAgBuP9j9opu2CrWVV95h7bCuzbIxE0vjDn
+    W0Vfjht5L6kALDAqMAUGAytlcAMhANdamAGCsQq31Uv+08lkBzoO4XLz2qYjJa8CGmj3B1Ea
+    AAAAAHDb2IAIBwBAjKQCGIXTWmCbjcu9M+4NCVkPd3ILTExNdJhLZ7zCDX4BqfcgYdonEdzahM8w
+    c1RLBZYBQaAE3hEzXaJRM3XQCQ==
+```
+
+Decoding the base64 to hex:
+```
+01                                                          method = RPK (1)
+0020                                                        trusted_keys_len = 32
+06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9  SPKI hash
+002c                                                        authenticator_len = 44
+302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172  SPKI (Ed25519)
+f3daa62325af021a68f707511a
+0000000070dbd880                                            not_after = 1893456000
+0807                                                        algorithm = Ed25519
+0040                                                        signature_len = 64
+8ca4021885d35a609b8dcbbd33ee0d09590f77720b4c4c4d74984b67bcc20d  signature
+7e01a9f72061da2711dcda84cf3073544b05960141a004de11335da2513375d009
+```
+
+The SPKI hash `06e3fd8f...` must be pre-configured in the client's trust store.
+
 ## Security Properties
 
 - **Authenticity**: Only the holder of the signing key can create valid signatures
