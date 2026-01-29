@@ -1,5 +1,5 @@
 use crate::sign::{ECDSA_P256_SPKI_PREFIX, ED25519_SPKI_PREFIX};
-use crate::{ECHAuth, ECHAuthMethod, Error, Result, ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME};
+use crate::{ECHAuth, ECHAuthMethod, Error, Result, SpecVersion, DEFAULT_SPEC_VERSION, ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use p256::ecdsa::{Signature as EcdsaSignature, VerifyingKey as EcdsaVerifyingKey};
 use sha2::{Digest, Sha256};
@@ -185,7 +185,7 @@ pub fn verify_rpk(
     Ok(())
 }
 
-/// Verify an ECHAuth extension with PKIX method
+/// Verify an ECHAuth extension with PKIX method (versioned)
 ///
 /// # Arguments
 /// * `ech_config_tbs` - The ECHConfig bytes with ech_auth.signature set to zero-length
@@ -193,6 +193,7 @@ pub fn verify_rpk(
 /// * `public_name` - The public_name from the ECHConfig (for SAN check)
 /// * `trust_anchors` - Root certificates to trust (DER-encoded)
 /// * `current_time` - Current Unix timestamp
+/// * `version` - Spec version for not_after handling
 ///
 /// # Verification Steps
 /// 1. Check method is PKIX
@@ -203,16 +204,17 @@ pub fn verify_rpk(
 /// 6. Check certificate validity against current_time
 /// 7. Extract public key from leaf certificate
 /// 8. Verify signature based on algorithm
-pub fn verify_pkix(
+pub fn verify_pkix_versioned(
     ech_config_tbs: &[u8],
     ech_auth: &ECHAuth,
     public_name: &str,
     trust_anchors: &[Vec<u8>],
     current_time: u64,
+    version: SpecVersion,
 ) -> Result<()> {
     // Step 1: Check method
     if ech_auth.method != ECHAuthMethod::Pkix {
-        return Err(Error::UnsupportedMethod(ech_auth.method.to_u8()));
+        return Err(Error::UnsupportedMethod(ech_auth.method.to_wire(version)));
     }
 
     // Step 2: Extract signature block
@@ -221,12 +223,22 @@ pub fn verify_pkix(
         .as_ref()
         .ok_or(Error::SignatureMissing)?;
 
-    // Step 2.5: Check expiration (PR #2: PKIX now requires not_after)
-    if current_time >= sig.not_after {
-        return Err(Error::Expired {
-            not_after: sig.not_after,
-            current: current_time,
-        });
+    // Step 2.5: Check expiration based on version
+    // - Published: not_after must be 0 (skip validation)
+    // - PR2: not_after required, verify current_time < not_after
+    match version {
+        SpecVersion::Published => {
+            // Published spec: not_after should be 0, skip time check
+            // (certificate chain validation handles expiration)
+        }
+        SpecVersion::PR2 => {
+            if current_time >= sig.not_after {
+                return Err(Error::Expired {
+                    not_after: sig.not_after,
+                    current: current_time,
+                });
+            }
+        }
     }
 
     // Parse certificate chain from authenticator
@@ -336,6 +348,17 @@ pub fn verify_pkix(
     }
 
     Ok(())
+}
+
+/// Verify an ECHAuth extension with PKIX method (uses DEFAULT_SPEC_VERSION)
+pub fn verify_pkix(
+    ech_config_tbs: &[u8],
+    ech_auth: &ECHAuth,
+    public_name: &str,
+    trust_anchors: &[Vec<u8>],
+    current_time: u64,
+) -> Result<()> {
+    verify_pkix_versioned(ech_config_tbs, ech_auth, public_name, trust_anchors, current_time, DEFAULT_SPEC_VERSION)
 }
 
 /// Parse certificate chain from TLS-style encoding (24-bit length prefix per cert)

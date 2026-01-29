@@ -298,3 +298,140 @@ func TestMultipleTrustedKeys(t *testing.T) {
 		t.Errorf("verification failed with multiple keys: %v", err)
 	}
 }
+
+// =============================================================================
+// VERSIONED ENCODE/DECODE TESTS
+// =============================================================================
+
+func TestVersionedEncodeDecodePR2(t *testing.T) {
+	auth := &Auth{
+		Method:      MethodRPK,
+		TrustedKeys: []SPKIHash{{42, 42, 42}},
+		Signature:   nil,
+	}
+
+	encoded := auth.EncodeVersioned(SpecPR2)
+	// PR2: rpk=0
+	if encoded[0] != 0 {
+		t.Errorf("expected method byte 0, got %d", encoded[0])
+	}
+
+	decoded, err := DecodeVersioned(encoded, SpecPR2)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if decoded.Method != MethodRPK {
+		t.Errorf("expected MethodRPK, got %v", decoded.Method)
+	}
+}
+
+func TestVersionedEncodeDecodePublished(t *testing.T) {
+	auth := &Auth{
+		Method:      MethodRPK,
+		TrustedKeys: []SPKIHash{{42, 42, 42}},
+		Signature:   nil,
+	}
+
+	encoded := auth.EncodeVersioned(SpecPublished)
+	// Published: rpk=1
+	if encoded[0] != 1 {
+		t.Errorf("expected method byte 1, got %d", encoded[0])
+	}
+
+	decoded, err := DecodeVersioned(encoded, SpecPublished)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if decoded.Method != MethodRPK {
+		t.Errorf("expected MethodRPK, got %v", decoded.Method)
+	}
+}
+
+func TestVersionedPKIXMethod(t *testing.T) {
+	auth := &Auth{
+		Method:      MethodPKIX,
+		TrustedKeys: nil,
+		Signature:   nil,
+	}
+
+	// PR2: pkix=1
+	encodedPR2 := auth.EncodeVersioned(SpecPR2)
+	if encodedPR2[0] != 1 {
+		t.Errorf("PR2 pkix: expected method byte 1, got %d", encodedPR2[0])
+	}
+
+	// Published: pkix=2
+	encodedPub := auth.EncodeVersioned(SpecPublished)
+	if encodedPub[0] != 2 {
+		t.Errorf("Published pkix: expected method byte 2, got %d", encodedPub[0])
+	}
+}
+
+func TestCrossVersionMismatch(t *testing.T) {
+	// Encode with Published (rpk=1), decode with PR2 (1=pkix)
+	auth := &Auth{
+		Method:      MethodRPK,
+		TrustedKeys: []SPKIHash{{42, 42, 42}},
+		Signature:   nil,
+	}
+
+	encoded := auth.EncodeVersioned(SpecPublished)
+	// Method byte is 1 (Published rpk)
+	if encoded[0] != 1 {
+		t.Errorf("expected method byte 1, got %d", encoded[0])
+	}
+
+	// Decode with PR2: method 1 = Pkix (wrong!)
+	decoded, err := DecodeVersioned(encoded, SpecPR2)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if decoded.Method != MethodPKIX {
+		t.Errorf("expected cross-version to interpret as PKIX, got %v", decoded.Method)
+	}
+	if decoded.Method == auth.Method {
+		t.Error("expected method mismatch in cross-version decode")
+	}
+}
+
+func TestDetectVersionPR2(t *testing.T) {
+	auth := &Auth{
+		Method:      MethodRPK,
+		TrustedKeys: []SPKIHash{{42, 42, 42}},
+	}
+	encoded := auth.EncodeVersioned(SpecPR2)
+
+	ver, ok := DetectVersion(encoded)
+	if !ok {
+		t.Error("expected version detection to succeed for PR2 RPK")
+	}
+	if ver != SpecPR2 {
+		t.Errorf("expected SpecPR2, got %v", ver)
+	}
+}
+
+func TestDetectVersionPublishedPKIX(t *testing.T) {
+	auth := &Auth{
+		Method:      MethodPKIX,
+		TrustedKeys: nil,
+	}
+	encoded := auth.EncodeVersioned(SpecPublished)
+	// Method byte should be 2
+
+	ver, ok := DetectVersion(encoded)
+	if !ok {
+		t.Error("expected version detection to succeed for Published PKIX")
+	}
+	if ver != SpecPublished {
+		t.Errorf("expected SpecPublished, got %v", ver)
+	}
+}
+
+func TestDetectVersionAmbiguous(t *testing.T) {
+	// Method byte 1 is ambiguous (PR2 pkix OR Published rpk)
+	data := []byte{1, 0, 0} // method=1, no trusted keys
+	_, ok := DetectVersion(data)
+	if ok {
+		t.Error("expected version detection to be ambiguous for method=1")
+	}
+}

@@ -1,12 +1,12 @@
-use crate::{ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature, Error, Result};
+use crate::{ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature, Error, Result, SpecVersion, DEFAULT_SPEC_VERSION};
 
 impl ECHAuth {
-    /// Encode to TLS presentation language format (combined format for interop)
-    pub fn encode(&self) -> Vec<u8> {
+    /// Encode to TLS presentation language format with spec version
+    pub fn encode_versioned(&self, version: SpecVersion) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        // method: u8
-        buf.push(self.method.to_u8());
+        // method: u8 (version-aware)
+        buf.push(self.method.to_wire(version));
 
         // trusted_keys: u16 length prefix, then N*32 bytes
         let keys_len = self.trusted_keys.len() * 32;
@@ -38,15 +38,20 @@ impl ECHAuth {
         buf
     }
 
-    /// Decode from TLS presentation language format (combined format)
-    pub fn decode(data: &[u8]) -> Result<Self> {
+    /// Encode to TLS presentation language format (uses DEFAULT_SPEC_VERSION)
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_versioned(DEFAULT_SPEC_VERSION)
+    }
+
+    /// Decode from TLS presentation language format with spec version
+    pub fn decode_versioned(data: &[u8], version: SpecVersion) -> Result<Self> {
         let mut offset = 0;
 
-        // Parse method
+        // Parse method (version-aware)
         if data.len() < offset + 1 {
             return Err(Error::Decode("insufficient data for method".into()));
         }
-        let method = ECHAuthMethod::from_u8(data[offset])
+        let method = ECHAuthMethod::from_wire(data[offset], version)
             .ok_or_else(|| Error::UnsupportedMethod(data[offset]))?;
         offset += 1;
 
@@ -138,6 +143,39 @@ impl ECHAuth {
             signature,
         })
     }
+
+    /// Decode from TLS presentation language format (uses DEFAULT_SPEC_VERSION)
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        Self::decode_versioned(data, DEFAULT_SPEC_VERSION)
+    }
+}
+
+// ============================================================================
+// Version Detection
+// ============================================================================
+
+/// Heuristically detect the spec version from encoded ECHAuth data.
+///
+/// This is imperfect and can give wrong results for ambiguous data.
+/// Using an explicit version parameter is recommended.
+///
+/// Detection logic:
+/// - method=2: definitely Published (pkix)
+/// - method=0: likely PR2 (rpk) but could be Published 'none'
+/// - method=1: ambiguous (PR2 pkix vs Published rpk)
+///
+/// Returns None if the data is too short or clearly invalid.
+pub fn detect_version(data: &[u8]) -> Option<SpecVersion> {
+    if data.is_empty() {
+        return None;
+    }
+
+    match data[0] {
+        0 => Some(SpecVersion::PR2),    // PR2 rpk (or Published 'none' which we don't support)
+        1 => None,                       // Ambiguous: PR2 pkix OR Published rpk
+        2 => Some(SpecVersion::Published), // Definitely Published pkix
+        _ => None,                       // Invalid method
+    }
 }
 
 // ============================================================================
@@ -145,10 +183,10 @@ impl ECHAuth {
 // ============================================================================
 
 impl ECHAuthInfo {
-    /// Encode to TLS wire format (PR #2 ech_authinfo)
-    pub fn encode(&self) -> Vec<u8> {
+    /// Encode to TLS wire format with spec version
+    pub fn encode_versioned(&self, version: SpecVersion) -> Vec<u8> {
         let mut buf = Vec::new();
-        buf.push(self.method.to_u8());
+        buf.push(self.method.to_wire(version));
 
         let keys_len = self.trusted_keys.len() * 32;
         buf.extend_from_slice(&(keys_len as u16).to_be_bytes());
@@ -159,13 +197,18 @@ impl ECHAuthInfo {
         buf
     }
 
-    /// Decode from TLS wire format
-    pub fn decode(data: &[u8]) -> Result<Self> {
+    /// Encode to TLS wire format (uses DEFAULT_SPEC_VERSION)
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_versioned(DEFAULT_SPEC_VERSION)
+    }
+
+    /// Decode from TLS wire format with spec version
+    pub fn decode_versioned(data: &[u8], version: SpecVersion) -> Result<Self> {
         if data.is_empty() {
             return Err(Error::Decode("insufficient data for method".into()));
         }
 
-        let method = ECHAuthMethod::from_u8(data[0])
+        let method = ECHAuthMethod::from_wire(data[0], version)
             .ok_or_else(|| Error::UnsupportedMethod(data[0]))?;
 
         if data.len() < 3 {
@@ -189,13 +232,18 @@ impl ECHAuthInfo {
 
         Ok(ECHAuthInfo { method, trusted_keys })
     }
+
+    /// Decode from TLS wire format (uses DEFAULT_SPEC_VERSION)
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        Self::decode_versioned(data, DEFAULT_SPEC_VERSION)
+    }
 }
 
 impl ECHAuthRetry {
-    /// Encode to TLS wire format (PR #2 ech_auth in retry)
-    pub fn encode(&self) -> Vec<u8> {
+    /// Encode to TLS wire format with spec version
+    pub fn encode_versioned(&self, version: SpecVersion) -> Vec<u8> {
         let mut buf = Vec::new();
-        buf.push(self.method.to_u8());
+        buf.push(self.method.to_wire(version));
         buf.extend_from_slice(&self.not_after.to_be_bytes());
         buf.extend_from_slice(&(self.authenticator.len() as u16).to_be_bytes());
         buf.extend_from_slice(&self.authenticator);
@@ -205,13 +253,18 @@ impl ECHAuthRetry {
         buf
     }
 
-    /// Decode from TLS wire format
-    pub fn decode(data: &[u8]) -> Result<Self> {
+    /// Encode to TLS wire format (uses DEFAULT_SPEC_VERSION)
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_versioned(DEFAULT_SPEC_VERSION)
+    }
+
+    /// Decode from TLS wire format with spec version
+    pub fn decode_versioned(data: &[u8], version: SpecVersion) -> Result<Self> {
         if data.is_empty() {
             return Err(Error::Decode("insufficient data".into()));
         }
 
-        let method = ECHAuthMethod::from_u8(data[0])
+        let method = ECHAuthMethod::from_wire(data[0], version)
             .ok_or_else(|| Error::UnsupportedMethod(data[0]))?;
 
         if data.len() < 9 {
@@ -256,6 +309,11 @@ impl ECHAuthRetry {
             algorithm,
             signature,
         })
+    }
+
+    /// Decode from TLS wire format (uses DEFAULT_SPEC_VERSION)
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        Self::decode_versioned(data, DEFAULT_SPEC_VERSION)
     }
 }
 
@@ -329,5 +387,73 @@ mod tests {
             ECHAuth::decode(&data),
             Err(Error::UnsupportedMethod(255))
         ));
+    }
+
+    #[test]
+    fn test_versioned_encode_decode_pr2() {
+        let auth = ECHAuth {
+            method: ECHAuthMethod::Rpk,
+            trusted_keys: vec![[42u8; 32]],
+            signature: None,
+        };
+
+        let encoded = auth.encode_versioned(SpecVersion::PR2);
+        // PR2: rpk=0
+        assert_eq!(encoded[0], 0);
+
+        let decoded = ECHAuth::decode_versioned(&encoded, SpecVersion::PR2).unwrap();
+        assert_eq!(auth, decoded);
+    }
+
+    #[test]
+    fn test_versioned_encode_decode_published() {
+        let auth = ECHAuth {
+            method: ECHAuthMethod::Rpk,
+            trusted_keys: vec![[42u8; 32]],
+            signature: None,
+        };
+
+        let encoded = auth.encode_versioned(SpecVersion::Published);
+        // Published: rpk=1
+        assert_eq!(encoded[0], 1);
+
+        let decoded = ECHAuth::decode_versioned(&encoded, SpecVersion::Published).unwrap();
+        assert_eq!(auth, decoded);
+    }
+
+    #[test]
+    fn test_versioned_pkix_method() {
+        let auth = ECHAuth {
+            method: ECHAuthMethod::Pkix,
+            trusted_keys: vec![],
+            signature: None,
+        };
+
+        // PR2: pkix=1
+        let encoded_pr2 = auth.encode_versioned(SpecVersion::PR2);
+        assert_eq!(encoded_pr2[0], 1);
+
+        // Published: pkix=2
+        let encoded_pub = auth.encode_versioned(SpecVersion::Published);
+        assert_eq!(encoded_pub[0], 2);
+    }
+
+    #[test]
+    fn test_cross_version_mismatch() {
+        // Encode with Published (rpk=1), decode with PR2 (1=pkix)
+        let auth = ECHAuth {
+            method: ECHAuthMethod::Rpk,
+            trusted_keys: vec![[42u8; 32]],
+            signature: None,
+        };
+
+        let encoded = auth.encode_versioned(SpecVersion::Published);
+        // Method byte is 1 (Published rpk)
+        assert_eq!(encoded[0], 1);
+
+        // Decode with PR2: method 1 = Pkix (wrong!)
+        let decoded = ECHAuth::decode_versioned(&encoded, SpecVersion::PR2).unwrap();
+        assert_eq!(decoded.method, ECHAuthMethod::Pkix);
+        assert_ne!(decoded.method, auth.method);
     }
 }

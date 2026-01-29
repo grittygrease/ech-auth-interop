@@ -79,8 +79,8 @@ func SignPKIX(echConfigTBS []byte, privateKey ed25519.PrivateKey, certChain [][]
 	}
 }
 
-// VerifyPKIX verifies an ECHAuth extension with PKIX method
-func VerifyPKIX(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIXTrustAnchor, now time.Time) error {
+// VerifyPKIXVersioned verifies an ECHAuth extension with PKIX method (versioned)
+func VerifyPKIXVersioned(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIXTrustAnchor, now time.Time, ver SpecVersion) error {
 	// Step 1: Check method
 	if auth.Method != MethodPKIX {
 		return fmt.Errorf("%w: expected PKIX, got %v", ErrUnsupportedMethod, auth.Method)
@@ -92,10 +92,15 @@ func VerifyPKIX(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIX
 	}
 	sig := auth.Signature
 
-	// Step 2.5: Check expiration (PR #2: PKIX now requires not_after)
-	if uint64(now.Unix()) >= sig.NotAfter {
-		return fmt.Errorf("%w: not_after %d < current %d", ErrExpired, sig.NotAfter, now.Unix())
+	// Step 2.5: Check expiration based on version
+	// - Published: not_after should be 0, skip time check (cert chain handles it)
+	// - PR2: not_after required, verify current_time < not_after
+	if ver == SpecPR2 {
+		if uint64(now.Unix()) >= sig.NotAfter {
+			return fmt.Errorf("%w: not_after %d < current %d", ErrExpired, sig.NotAfter, now.Unix())
+		}
 	}
+	// Published: skip not_after check (cert chain validation handles expiration)
 
 	// Step 3: Parse certificate chain
 	certs, err := parseCertificateChain(sig.Authenticator)
@@ -165,6 +170,11 @@ func VerifyPKIX(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIX
 	}
 
 	return nil
+}
+
+// VerifyPKIX verifies an ECHAuth extension with PKIX method (uses DefaultSpecVersion)
+func VerifyPKIX(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIXTrustAnchor, now time.Time) error {
+	return VerifyPKIXVersioned(echConfigTBS, auth, publicName, anchor, now, DefaultSpecVersion)
 }
 
 // parseCertificateChain parses TLS-style certificate chain (24-bit length prefix)

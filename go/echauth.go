@@ -23,11 +23,24 @@ const (
 // ECH Auth extension type (use 0xff01 for testing, TBD in final spec)
 const ECHAuthExtensionType uint16 = 0xff01
 
+// SpecVersion identifies the wire format version
+type SpecVersion uint8
+
+const (
+	// SpecPR2 is the PR #2 format: rpk=0, pkix=1, not_after required for PKIX
+	SpecPR2 SpecVersion = iota
+	// SpecPublished is the -00 draft: none=0, rpk=1, pkix=2, not_after=0 for PKIX
+	SpecPublished
+)
+
+// DefaultSpecVersion is used by non-versioned APIs.
+// Change this to switch the entire library's wire format.
+var DefaultSpecVersion = SpecPR2
+
 // Method identifies the authentication method
 type Method uint8
 
 const (
-	// PR #2: rpk=0, pkix=1 (was: none=0, rpk=1, pkix=2)
 	MethodRPK  Method = 0
 	MethodPKIX Method = 1
 )
@@ -40,6 +53,43 @@ func (m Method) String() string {
 		return "pkix"
 	default:
 		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
+// ToWire converts Method to wire format byte using spec version
+func (m Method) ToWire(ver SpecVersion) uint8 {
+	switch ver {
+	case SpecPR2:
+		// PR2: rpk=0, pkix=1
+		return uint8(m)
+	case SpecPublished:
+		// Published: rpk=1, pkix=2
+		return uint8(m) + 1
+	default:
+		return uint8(m)
+	}
+}
+
+// MethodFromWire parses Method from wire format byte using spec version
+func MethodFromWire(val uint8, ver SpecVersion) (Method, error) {
+	switch ver {
+	case SpecPR2:
+		// PR2: rpk=0, pkix=1
+		if val > 1 {
+			return 0, fmt.Errorf("%w: %d", ErrUnsupportedMethod, val)
+		}
+		return Method(val), nil
+	case SpecPublished:
+		// Published: none=0 (unsupported), rpk=1, pkix=2
+		if val == 0 {
+			return 0, fmt.Errorf("%w: 'none' method not supported", ErrUnsupportedMethod)
+		}
+		if val > 2 {
+			return 0, fmt.Errorf("%w: %d", ErrUnsupportedMethod, val)
+		}
+		return Method(val - 1), nil
+	default:
+		return 0, fmt.Errorf("%w: unknown version", ErrDecode)
 	}
 }
 
@@ -192,8 +242,8 @@ func VerifyRPK(echConfigTBS []byte, auth *Auth, now time.Time) error {
 	return nil
 }
 
-// Encode serializes Auth to TLS wire format
-func (a *Auth) Encode() []byte {
+// EncodeVersioned serializes Auth to TLS wire format with spec version
+func (a *Auth) EncodeVersioned(ver SpecVersion) []byte {
 	// Calculate size
 	size := 1 // method
 	size += 2 // trusted_keys length
@@ -210,8 +260,8 @@ func (a *Auth) Encode() []byte {
 	buf := make([]byte, size)
 	offset := 0
 
-	// Method
-	buf[offset] = byte(a.Method)
+	// Method (version-aware)
+	buf[offset] = a.Method.ToWire(ver)
 	offset++
 
 	// Trusted keys
@@ -247,8 +297,13 @@ func (a *Auth) Encode() []byte {
 	return buf
 }
 
-// Decode parses Auth from TLS wire format
-func Decode(data []byte) (*Auth, error) {
+// Encode serializes Auth to TLS wire format (uses DefaultSpecVersion)
+func (a *Auth) Encode() []byte {
+	return a.EncodeVersioned(DefaultSpecVersion)
+}
+
+// DecodeVersioned parses Auth from TLS wire format with spec version
+func DecodeVersioned(data []byte, ver SpecVersion) (*Auth, error) {
 	if len(data) < 3 {
 		return nil, fmt.Errorf("%w: insufficient data", ErrDecode)
 	}
@@ -256,8 +311,12 @@ func Decode(data []byte) (*Auth, error) {
 	offset := 0
 	auth := &Auth{}
 
-	// Method
-	auth.Method = Method(data[offset])
+	// Method (version-aware)
+	method, err := MethodFromWire(data[offset], ver)
+	if err != nil {
+		return nil, err
+	}
+	auth.Method = method
 	offset++
 
 	// Trusted keys
@@ -331,4 +390,33 @@ func Decode(data []byte) (*Auth, error) {
 
 	auth.Signature = sig
 	return auth, nil
+}
+
+// Decode parses Auth from TLS wire format (uses DefaultSpecVersion)
+func Decode(data []byte) (*Auth, error) {
+	return DecodeVersioned(data, DefaultSpecVersion)
+}
+
+// DetectVersion heuristically detects the spec version from encoded data.
+// Returns (version, ok) where ok is false if detection is ambiguous or data invalid.
+//
+// Detection logic:
+// - method=2: definitely Published (pkix)
+// - method=0: likely PR2 (rpk) but could be Published 'none'
+// - method=1: ambiguous (PR2 pkix vs Published rpk)
+func DetectVersion(data []byte) (SpecVersion, bool) {
+	if len(data) == 0 {
+		return 0, false
+	}
+
+	switch data[0] {
+	case 0:
+		return SpecPR2, true    // PR2 rpk (Published 'none' not supported)
+	case 1:
+		return 0, false         // Ambiguous: PR2 pkix OR Published rpk
+	case 2:
+		return SpecPublished, true // Definitely Published pkix
+	default:
+		return 0, false         // Invalid method
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 )
@@ -723,16 +724,15 @@ func TestDecode_MethodRPK_NoSignature(t *testing.T) {
 }
 
 func TestDecode_UnknownMethod(t *testing.T) {
-	// Unknown method should still decode, verification will fail later
+	// Unknown method should fail at decode time (versioned validation)
 	data := []byte{0x99, 0x00, 0x00} // method=0x99
 
-	auth, err := Decode(data)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := Decode(data)
+	if err == nil {
+		t.Fatalf("expected error for unknown method, got nil")
 	}
-
-	if auth.Method != Method(0x99) {
-		t.Errorf("expected method 0x99, got %v", auth.Method)
+	if !errors.Is(err, ErrUnsupportedMethod) {
+		t.Errorf("expected ErrUnsupportedMethod, got %v", err)
 	}
 }
 

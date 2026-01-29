@@ -13,6 +13,7 @@ pub use sign::{
 };
 pub use types::{
     ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature, SPKIHash,
-    ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME,
+    SpecVersion, DEFAULT_SPEC_VERSION, ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME,
 };
-pub use verify::{verify_pkix, verify_rpk};
+pub use verify::{verify_pkix, verify_pkix_versioned, verify_rpk};
+pub use codec::detect_version;

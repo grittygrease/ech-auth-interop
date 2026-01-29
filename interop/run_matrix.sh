@@ -3,6 +3,8 @@
 # ECH Auth Interop Test Matrix
 #
 # Tests cross-implementation signing and verification:
+#   - Same-version tests (PR2↔PR2, Published↔Published)
+#   - Cross-version tests (PR2↔Published - expected failures)
 #   - Rust signs → Go verifies
 #   - Go signs → Rust verifies
 #   - Rust signs → Rust verifies

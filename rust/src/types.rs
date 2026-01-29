@@ -4,28 +4,61 @@ pub const ED25519_SIGNATURE_SCHEME: u16 = 0x0807;
 /// TLS SignatureScheme for ECDSA P-256 SHA-256 (RFC 8446)
 pub const ECDSA_SECP256R1_SHA256: u16 = 0x0403;
 
+/// Spec version for wire format compatibility
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpecVersion {
+    /// PR #2 format: rpk=0, pkix=1, not_after required for PKIX
+    #[default]
+    PR2,
+    /// Published -00 draft: none=0, rpk=1, pkix=2, not_after=0 for PKIX
+    Published,
+}
+
+/// Default spec version used by non-versioned APIs.
+/// Change this to switch the entire library's wire format.
+pub const DEFAULT_SPEC_VERSION: SpecVersion = SpecVersion::PR2;
+
 /// ECH authentication method enumeration
-/// PR #2 changes: rpk=0, pkix=1 (was: none=0, rpk=1, pkix=2)
-#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ECHAuthMethod {
-    Rpk = 0,
-    Pkix = 1,
+    Rpk,
+    Pkix,
 }
 
 impl ECHAuthMethod {
-    /// Parse from wire format byte
-    pub fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::Rpk),
-            1 => Some(Self::Pkix),
+    /// Parse from wire format byte using spec version
+    pub fn from_wire(value: u8, version: SpecVersion) -> Option<Self> {
+        match (value, version) {
+            // PR2: rpk=0, pkix=1
+            (0, SpecVersion::PR2) => Some(Self::Rpk),
+            (1, SpecVersion::PR2) => Some(Self::Pkix),
+            // Published: none=0 (unsupported), rpk=1, pkix=2
+            (1, SpecVersion::Published) => Some(Self::Rpk),
+            (2, SpecVersion::Published) => Some(Self::Pkix),
             _ => None,
         }
     }
 
-    /// Convert to wire format byte
+    /// Convert to wire format byte using spec version
+    pub fn to_wire(self, version: SpecVersion) -> u8 {
+        match (self, version) {
+            // PR2: rpk=0, pkix=1
+            (Self::Rpk, SpecVersion::PR2) => 0,
+            (Self::Pkix, SpecVersion::PR2) => 1,
+            // Published: rpk=1, pkix=2
+            (Self::Rpk, SpecVersion::Published) => 1,
+            (Self::Pkix, SpecVersion::Published) => 2,
+        }
+    }
+
+    /// Parse from wire format byte (PR2 default for backwards compatibility)
+    pub fn from_u8(value: u8) -> Option<Self> {
+        Self::from_wire(value, SpecVersion::PR2)
+    }
+
+    /// Convert to wire format byte (PR2 default for backwards compatibility)
     pub fn to_u8(self) -> u8 {
-        self as u8
+        self.to_wire(SpecVersion::PR2)
     }
 }
 
@@ -125,11 +158,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_method_roundtrip() {
+    fn test_method_roundtrip_pr2() {
+        // PR2: rpk=0, pkix=1
+        assert_eq!(ECHAuthMethod::from_wire(0, SpecVersion::PR2), Some(ECHAuthMethod::Rpk));
+        assert_eq!(ECHAuthMethod::from_wire(1, SpecVersion::PR2), Some(ECHAuthMethod::Pkix));
+        assert_eq!(ECHAuthMethod::from_wire(2, SpecVersion::PR2), None);
+
+        assert_eq!(ECHAuthMethod::Rpk.to_wire(SpecVersion::PR2), 0);
+        assert_eq!(ECHAuthMethod::Pkix.to_wire(SpecVersion::PR2), 1);
+    }
+
+    #[test]
+    fn test_method_roundtrip_published() {
+        // Published: none=0 (unsupported), rpk=1, pkix=2
+        assert_eq!(ECHAuthMethod::from_wire(0, SpecVersion::Published), None); // 'none' not supported
+        assert_eq!(ECHAuthMethod::from_wire(1, SpecVersion::Published), Some(ECHAuthMethod::Rpk));
+        assert_eq!(ECHAuthMethod::from_wire(2, SpecVersion::Published), Some(ECHAuthMethod::Pkix));
+
+        assert_eq!(ECHAuthMethod::Rpk.to_wire(SpecVersion::Published), 1);
+        assert_eq!(ECHAuthMethod::Pkix.to_wire(SpecVersion::Published), 2);
+    }
+
+    #[test]
+    fn test_method_backward_compat() {
+        // Verify backwards-compatible methods use PR2
         assert_eq!(ECHAuthMethod::from_u8(0), Some(ECHAuthMethod::Rpk));
         assert_eq!(ECHAuthMethod::from_u8(1), Some(ECHAuthMethod::Pkix));
-        assert_eq!(ECHAuthMethod::from_u8(2), None);
-
         assert_eq!(ECHAuthMethod::Rpk.to_u8(), 0);
         assert_eq!(ECHAuthMethod::Pkix.to_u8(), 1);
     }
