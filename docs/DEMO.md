@@ -38,7 +38,7 @@ Output:
 ```json
 {
   "algorithm": 2055,
-  "ech_auth_encoded_hex": "01002006e3fd8f...375d009",
+  "ech_auth_encoded_hex": "00002006e3fd8f...375d009",
   "ech_config_tbs_hex": "746573742045434820636f6e66696720666f7220696e7465726f70",
   "name": "interop_ed25519_rpk",
   "not_after": 1893456000,
@@ -47,14 +47,14 @@ Output:
 }
 ```
 
-### 2. Wire Format Breakdown
+### 2. Wire Format Breakdown (RPK)
 
-The `ech_auth` extension encoding (157 bytes total):
+The `ech_auth` extension encoding for RPK with Ed25519 (157 bytes total):
 
 ```
 Offset  Hex                                                               Field
 ------  ----------------------------------------------------------------  ------------------
-0       01                                                                method = RPK (1)
+0       00                                                                method = RPK (0)
 1-2     00 20                                                             trusted_keys_len = 32
 3-34    06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9  spki_hash (SHA-256)
 35-36   00 2c                                                             authenticator_len = 44
@@ -67,11 +67,11 @@ Offset  Hex                                                               Field
         7e01a9f72061da2711dcda84cf3073544b05960141a004de11335da2513375d009
 ```
 
-### 3. Field Details
+### 3. RPK Field Details
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `method` | 1 byte | `0x01` = RPK (raw public key) |
+| `method` | 1 byte | `0x00` = RPK (raw public key) |
 | `trusted_keys_len` | 2 bytes | Length of SPKI hash list |
 | `spki_hash` | 32 bytes | SHA-256 of signer's SPKI |
 | `authenticator_len` | 2 bytes | Length of public key encoding |
@@ -80,6 +80,30 @@ Offset  Hex                                                               Field
 | `algorithm` | 2 bytes | `0x0807` = Ed25519 |
 | `signature_len` | 2 bytes | Length of signature |
 | `signature` | variable | Ed25519: 64 bytes |
+
+### 3b. Wire Format (PKIX)
+
+For PKIX, the structure is similar but with a certificate chain instead of bare SPKI:
+
+```
+Offset  Hex                                                               Field
+------  ----------------------------------------------------------------  ------------------
+0       01                                                                method = PKIX (1)
+1-2     00 00                                                             trusted_keys_len = 0 (unused)
+3-5     00 01 XX                                                          authenticator_len
+6-...   [24-bit len + DER cert] * N                                       certificate chain
+...     00 00 00 00 70 db d8 80                                           not_after (required)
+...     08 07                                                             algorithm = Ed25519
+...     00 40                                                             signature_len = 64
+...     <signature>                                                       signature
+```
+
+Key differences from RPK:
+- `method` = `0x01` (PKIX)
+- `trusted_keys` is empty (validation via WebPKI)
+- `authenticator` contains TLS-style certificate chain (24-bit length prefix per cert)
+- Leaf certificate MUST have critical `id-pe-echConfigSigning` extension
+- `not_after` is now required for PKIX (was 0 in older drafts)
 
 ### 4. TLS Handshake Flow
 
@@ -142,7 +166,7 @@ go run ./cmd/ech-auth verify --config ../signed.bin --trust-anchor "$SPKI_HASH"
 Output:
 ```
 Parsed ECH Auth extension:
-  Method: 1 (RPK)
+  Method: 0 (RPK)
   Algorithm: 0x0807
   Not after: 1893456000 (2030-01-01T00:00:00Z)
   Signature: 64 bytes
@@ -205,7 +229,7 @@ example.com. 300 IN HTTPS 1 . alpn=h2,h3 ech=AQAgBuP9j9opu2CrWVV95h7bCuzbIxE0vjD
 
 Decoding the base64 to hex:
 ```
-01                                                          method = RPK (1)
+00                                                          method = RPK (0)
 0020                                                        trusted_keys_len = 32
 06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9  SPKI hash
 002c                                                        authenticator_len = 44

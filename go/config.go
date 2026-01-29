@@ -248,8 +248,6 @@ func VerifyConfig(config *ECHConfig, anchor *TrustAnchor, now func() uint64) err
 		return VerifyRPK(tbs, auth, timeFromUnix(now()))
 	case MethodPKIX:
 		return fmt.Errorf("%w: PKIX not yet implemented", ErrUnsupportedMethod)
-	case MethodNone:
-		return fmt.Errorf("%w: method none provides no authentication", ErrUnsupportedMethod)
 	default:
 		return fmt.Errorf("%w: %d", ErrUnsupportedMethod, auth.Method)
 	}

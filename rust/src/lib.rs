@@ -12,7 +12,7 @@ pub use sign::{
     sign_rpk_ecdsa,
 };
 pub use types::{
-    ECHAuth, ECHAuthMethod, ECHAuthSignature, SPKIHash, ECDSA_SECP256R1_SHA256,
-    ED25519_SIGNATURE_SCHEME,
+    ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature, SPKIHash,
+    ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME,
 };
 pub use verify::{verify_pkix, verify_rpk};

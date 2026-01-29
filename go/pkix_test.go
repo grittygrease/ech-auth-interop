@@ -85,7 +85,7 @@ func TestVerifyPKIX_Valid(t *testing.T) {
 
 	// Sign ECH config
 	echConfigTBS := []byte("test ECH config for PKIX")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	// Build Auth
 	auth := &Auth{
@@ -115,7 +115,7 @@ func TestVerifyPKIX_MissingECHExtension(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	auth := &Auth{
 		Method:    MethodPKIX,
@@ -145,7 +145,7 @@ func TestVerifyPKIX_NonCriticalECHExtension(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	auth := &Auth{
 		Method:    MethodPKIX,
@@ -174,7 +174,7 @@ func TestVerifyPKIX_ExpiredCert(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	auth := &Auth{
 		Method:    MethodPKIX,
@@ -204,7 +204,7 @@ func TestVerifyPKIX_UntrustedRoot(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{otherCACert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	auth := &Auth{
 		Method:    MethodPKIX,
@@ -231,7 +231,7 @@ func TestVerifyPKIX_SANMismatch(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	auth := &Auth{
 		Method:    MethodPKIX,
@@ -258,7 +258,7 @@ func TestVerifyPKIX_WrongSignature(t *testing.T) {
 	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
 
 	echConfigTBS := []byte("test config")
-	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw})
+	sig := SignPKIX(echConfigTBS, leafKey, [][]byte{leafCert.Raw}, notAfter)
 
 	// Corrupt signature
 	sig.SignatureData[0] ^= 0xff

@@ -705,20 +705,20 @@ func TestDecode_TruncatedSignature(t *testing.T) {
 	}
 }
 
-func TestDecode_MethodNone(t *testing.T) {
-	data := []byte{0x00, 0x00, 0x00} // method=none, no trusted_keys
+func TestDecode_MethodRPK_NoSignature(t *testing.T) {
+	data := []byte{0x00, 0x00, 0x00} // method=rpk (0), no trusted_keys
 
 	auth, err := Decode(data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if auth.Method != MethodNone {
-		t.Errorf("expected method none, got %v", auth.Method)
+	if auth.Method != MethodRPK {
+		t.Errorf("expected method rpk, got %v", auth.Method)
 	}
 
 	if auth.Signature != nil {
-		t.Error("expected nil signature for method none")
+		t.Error("expected nil signature when no signature data present")
 	}
 }
 
@@ -1051,7 +1051,8 @@ func TestKnownTestVector(t *testing.T) {
 	}
 
 	encoded := auth.Encode()
-	expectedEncoded, _ := hex.DecodeString("01002006e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9002c302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a0000000070dbd880080700408ca4021885d35a609b8dcbbd33ee0d09590f77720b4c4c4d74984b67bcc20d7e01a9f72061da2711dcda84cf3073544b05960141a004de11335da2513375d009")
+	// PR #2: method=0 for RPK (was 1)
+	expectedEncoded, _ := hex.DecodeString("00002006e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9002c302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a0000000070dbd880080700408ca4021885d35a609b8dcbbd33ee0d09590f77720b4c4c4d74984b67bcc20d7e01a9f72061da2711dcda84cf3073544b05960141a004de11335da2513375d009")
 	if !bytes.Equal(encoded, expectedEncoded) {
 		t.Errorf("encoded mismatch:\n  got:  %x\n  want: %x", encoded, expectedEncoded)
 	}

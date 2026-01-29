@@ -159,10 +159,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 current_time,
             )
         }
-        ECHAuthMethod::None => {
-            eprintln!("Error: method None cannot be verified");
-            process::exit(1);
-        }
     };
 
     match result {

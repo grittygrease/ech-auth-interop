@@ -27,15 +27,13 @@ const ECHAuthExtensionType uint16 = 0xff01
 type Method uint8
 
 const (
-	MethodNone Method = 0
-	MethodRPK  Method = 1
-	MethodPKIX Method = 2
+	// PR #2: rpk=0, pkix=1 (was: none=0, rpk=1, pkix=2)
+	MethodRPK  Method = 0
+	MethodPKIX Method = 1
 )
 
 func (m Method) String() string {
 	switch m {
-	case MethodNone:
-		return "none"
 	case MethodRPK:
 		return "rpk"
 	case MethodPKIX:
@@ -283,12 +281,7 @@ func Decode(data []byte) (*Auth, error) {
 		offset += 32
 	}
 
-	// Signature block (only present when method != none)
-	if auth.Method == MethodNone {
-		return auth, nil
-	}
-
-	// No more data means no signature (for method=none compatibility)
+	// No more data means no signature
 	if offset >= len(data) {
 		return auth, nil
 	}

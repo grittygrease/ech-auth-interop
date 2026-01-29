@@ -8,16 +8,32 @@ This draft defines authenticated ECH configuration distribution, allowing TLS cl
 
 All implementations interoperate for signing and verification:
 
+### RPK (Raw Public Key)
+
 | Sign \ Verify | Rust | Go  | NSS |
 |---------------|:----:|:---:|:---:|
 | **Rust**      |  ✓   |  ✓  |  ✓  |
 | **Go**        |  ✓   |  ✓  |  ✓  |
 | **NSS**       |  ✓   |  ✓  |  ✓  |
 
+Algorithms tested:
+- Ed25519 (recommended)
+- ECDSA P-256 (secp256r1)
+
+### PKIX (Certificate-Based)
+
+| Sign \ Verify | Rust | Go  | NSS |
+|---------------|:----:|:---:|:---:|
+| **Rust**      |  ✓   |  ✓  |  -  |
+| **Go**        |  ✓   |  ✓  |  -  |
+| **NSS**       |  -   |  -  |  -  |
+
+NSS PKIX support not yet implemented.
+
 Tested with:
-- Ed25519 signatures
-- ECDSA P-256 signatures
 - Real TLS 1.3 ECH handshakes with rejection/retry
+- WebPKI certificate chain validation
+- Critical `id-pe-echConfigSigning` extension check
 
 ## Authentication Methods
 
@@ -175,22 +191,30 @@ This tests:
 
 ## Wire Format
 
-The `ech_auth` extension (type 0xff01, TBD) in ECHConfig:
+Per PR #2, the mechanism uses two extensions:
 
+**ech_authinfo** (in initial ECHConfig, via DNS):
 ```
 struct {
-    AuthMethod method;           // 1 byte: 0=none, 1=rpk, 2=pkix
-    uint64 not_before;          // 8 bytes
-    uint64 not_after;           // 8 bytes
-    SignatureAlgorithm alg;     // 2 bytes
-    opaque spki<0..2^16-1>;     // Public key (RPK) or cert chain (PKIX)
-    opaque signature<0..2^16-1>;
-} ECHAuthExtension;
+    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
+    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
+} ECHAuthInfo;
+```
+
+**ech_auth** (in retry configs, via TLS):
+```
+struct {
+    ECHAuthMethod method;              // 1 byte
+    uint64 not_after;                  // 8 bytes (Unix timestamp)
+    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
+    SignatureScheme algorithm;         // 2 bytes
+    opaque signature<1..2^16-1>;
+} ECHAuth;
 ```
 
 ## Security Considerations
 
-- **Time validation**: All implementations enforce not_before/not_after bounds
+- **Time validation**: All implementations enforce `not_after` expiration
 - **Algorithm agility**: Supports multiple signature algorithms
 - **Fail-closed**: Empty trust anchors reject all configs (no silent fallback)
 - **Legacy mode**: Nil/null trust anchor allows unverified configs for gradual deployment

@@ -221,6 +221,14 @@ pub fn verify_pkix(
         .as_ref()
         .ok_or(Error::SignatureMissing)?;
 
+    // Step 2.5: Check expiration (PR #2: PKIX now requires not_after)
+    if current_time >= sig.not_after {
+        return Err(Error::Expired {
+            not_after: sig.not_after,
+            current: current_time,
+        });
+    }
+
     // Parse certificate chain from authenticator
     let certificates = parse_certificate_chain(&sig.authenticator)?;
     if certificates.is_empty() {
@@ -580,15 +588,16 @@ mod tests {
 
     #[test]
     fn test_verify_rpk_wrong_method() {
+        // Using PKIX method should fail for RPK verification
         let ech_auth = ECHAuth {
-            method: ECHAuthMethod::None,
+            method: ECHAuthMethod::Pkix,
             trusted_keys: vec![],
             signature: None,
         };
 
         assert!(matches!(
             verify_rpk(b"", &ech_auth, 0),
-            Err(Error::UnsupportedMethod(0))
+            Err(Error::UnsupportedMethod(1))
         ));
     }
 

@@ -48,7 +48,8 @@ func NewPKIXTrustAnchor(rootCerts [][]byte) (*PKIXTrustAnchor, error) {
 }
 
 // SignPKIX signs an ECHConfig using PKIX method with Ed25519
-func SignPKIX(echConfigTBS []byte, privateKey ed25519.PrivateKey, certChain [][]byte) *Signature {
+// Per PR #2: not_after is now required for PKIX (was 0)
+func SignPKIX(echConfigTBS []byte, privateKey ed25519.PrivateKey, certChain [][]byte, notAfter time.Time) *Signature {
 	// Encode certificate chain (TLS-style: 24-bit length prefix per cert)
 	var authenticator []byte
 	for _, cert := range certChain {
@@ -72,7 +73,7 @@ func SignPKIX(echConfigTBS []byte, privateKey ed25519.PrivateKey, certChain [][]
 
 	return &Signature{
 		Authenticator: authenticator,
-		NotAfter:      0, // PKIX uses certificate validity, not this field
+		NotAfter:      uint64(notAfter.Unix()), // PR #2: PKIX now requires not_after
 		Algorithm:     Ed25519SignatureScheme,
 		SignatureData: sig,
 	}
@@ -90,6 +91,11 @@ func VerifyPKIX(echConfigTBS []byte, auth *Auth, publicName string, anchor *PKIX
 		return ErrSignatureMissing
 	}
 	sig := auth.Signature
+
+	// Step 2.5: Check expiration (PR #2: PKIX now requires not_after)
+	if uint64(now.Unix()) >= sig.NotAfter {
+		return fmt.Errorf("%w: not_after %d < current %d", ErrExpired, sig.NotAfter, now.Unix())
+	}
 
 	// Step 3: Parse certificate chain
 	certs, err := parseCertificateChain(sig.Authenticator)
