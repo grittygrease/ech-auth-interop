@@ -1,0 +1,192 @@
+diff --git a/lib/ssl/sslimpl.h b/lib/ssl/sslimpl.h
+index abc1234..def5678 100644
+--- a/lib/ssl/sslimpl.h
++++ b/lib/ssl/sslimpl.h
+@@ -50,6 +50,7 @@
+ #include "sslt.h"
+ #include "sslspec.h"
+ #include "tls13hkdf.h"
++#include "tls13echauth.h"
+
+ typedef struct sslSocketStr sslSocket;
+ typedef struct sslNamedGroupDefStr sslNamedGroupDef;
+@@ -1012,6 +1013,9 @@ struct sslSocketStr {
+     /* ECH configs to use */
+     PRCList echConfigs;
+
++    /* ECH Auth trust anchors (SPKI hash pinning) */
++    sslEchAuthTrustAnchor *echAuthTrustAnchor;
++
+     /* TLS 1.3 PSKs. */
+     PRCList psk;
+
+diff --git a/lib/ssl/tls13ech.h b/lib/ssl/tls13ech.h
+index abc1234..def5678 100644
+--- a/lib/ssl/tls13ech.h
++++ b/lib/ssl/tls13ech.h
+@@ -12,6 +12,7 @@
+ #define __tls13ech_h_
+
+ #include "pk11hpke.h"
++#include "tls13echauth.h"
+
+ /* draft-09, supporting shared-mode and split-mode as a backend server only.
+  * Notes on the implementation status:
+@@ -47,6 +48,9 @@ struct sslEchConfigContentsStr {
+     PRUint8 maxNameLen;
+     char *publicName;
+     /* No supported extensions. */
++
++    /* ECH Auth extension (if present) */
++    sslEchConfigAuth echAuth;
+ };
+
+ /* ECH Information needed by a server to process a second CH after a
+diff --git a/lib/ssl/tls13ech.c b/lib/ssl/tls13ech.c
+index abc1234..def5678 100644
+--- a/lib/ssl/tls13ech.c
++++ b/lib/ssl/tls13ech.c
+@@ -25,6 +25,7 @@
+ #include "tls13con.h"
+ #include "tls13ech.h"
+ #include "tls13exthandle.h"
++#include "tls13echauth.h"
+
+ /* Encode an ECHConfigList (ours or GREASE) */
+ static SECStatus
+@@ -210,6 +211,47 @@ tls13_DecodeEchConfigContents(const sslReader *reader,
+         offset += extLen;
+     }
+
++    /* Parse extensions for ECH Auth */
++    contents->echAuth.hasAuth = PR_FALSE;
++    if (extensionsLen > 0) {
++        /* Reset extension reader */
++        const PRUint8 *extData = reader->buf.buf + extensionsOffset;
++        PRUint32 extOffset = 0;
++
++        while (extOffset < extensionsLen) {
++            /* Extension type (2 bytes) */
++            if (extOffset + 4 > extensionsLen) {
++                break;
++            }
++            PRUint16 extType = (extData[extOffset] << 8) | extData[extOffset + 1];
++            extOffset += 2;
++
++            /* Extension length (2 bytes) */
++            PRUint16 extLen = (extData[extOffset] << 8) | extData[extOffset + 1];
++            extOffset += 2;
++
++            if (extOffset + extLen > extensionsLen) {
++                break;
++            }
++
++            /* Check for ECH Auth extension (Draft or Legacy) */
++            if (extType == TLS13_ECH_AUTH_EXTENSION_TYPE ||
++                extType == TLS13_ECH_AUTH_EXTENSION_TYPE_LEGACY) {
++                SECStatus rv = tls13_ParseEchAuthExtension(
++                    extData + extOffset, extLen,
++                    &contents->echAuth.auth);
++                if (rv == SECSuccess) {
++                    contents->echAuth.hasAuth = PR_TRUE;
++                    SSL_TRC(50, ("tls13_DecodeEchConfigContents: "
++                                 "parsed ECH Auth extension"));
++                }
++                break;
++            }
++
++            extOffset += extLen;
++        }
++    }
++
+     return SECSuccess;
+ }
+
+@@ -268,6 +310,11 @@ tls13_DestroyEchConfig(sslEchConfig *config)
+     PORT_Free(config->contents.publicName);
+     SECITEM_FreeItem(&config->contents.publicKey, PR_FALSE);
+     SECITEM_FreeItem(&config->contents.suites, PR_FALSE);
++
++    /* Free ECH Auth extension data */
++    if (config->contents.echAuth.hasAuth) {
++        tls13_DestroyEchAuthExtension(&config->contents.echAuth.auth);
++    }
+     PORT_ZFree(config, sizeof(*config));
+ }
+
+diff --git a/lib/ssl/tls13exthandle.c b/lib/ssl/tls13exthandle.c
+index abc1234..def5678 100644
+--- a/lib/ssl/tls13exthandle.c
++++ b/lib/ssl/tls13exthandle.c
+@@ -23,6 +23,7 @@
+ #include "tls13con.h"
+ #include "tls13ech.h"
+ #include "tls13exthandle.h"
++#include "tls13echauth.h"
+
+ static SECStatus tls13_ServerSendCertificateRequestContextXtn(
+     const sslSocket *ss, TLSExtensionData *xtnData,
+@@ -1438,6 +1439,35 @@ tls13_ClientHandleEchXtn(const sslSocket *ss, TLSExtensionData *xtnData,
+     /* Don't mark ECH negotiated on rejection with retry_config.
+      * Save the the raw configs so the application can retry. If
+      * we sent GREASE ECH (no echHpkeCtx), don't apply retry_configs. */
+     if (ss->ssl3.hs.echHpkeCtx && !PR_CLIST_IS_EMPTY(&parsedConfigs)) {
++        /* Verify ECH Auth for each config if trust anchors are set */
++        if (ss->echAuthTrustAnchor &&
++            ss->echAuthTrustAnchor->numHashes > 0) {
++            PRCList *cursor;
++            PRBool anyVerified = PR_FALSE;
++
++            for (cursor = PR_LIST_HEAD(&parsedConfigs);
++                 cursor != &parsedConfigs;
++                 cursor = PR_NEXT_LINK(cursor)) {
++                sslEchConfig *cfg = (sslEchConfig *)cursor;
++
++                if (cfg->contents.echAuth.hasAuth) {
++                    SECStatus authRv = tls13_VerifyEchAuth(
++                        (sslSocket *)ss, cfg,
++                        &cfg->contents.echAuth.auth);
++                    if (authRv == SECSuccess) {
++                        anyVerified = PR_TRUE;
++                    }
++                }
++            }
++
++            if (!anyVerified) {
++                SSL_TRC(10, ("ECH Auth: no verified configs, rejecting"));
++                tls13_DestroyEchConfigs(&parsedConfigs);
++                PORT_SetError(SSL_ERROR_ECH_RETRY_WITHOUT_ECH);
++                return SECFailure;
++            }
++        }
++
+         rv = SECITEM_CopyItem(NULL, &xtnData->ech->retryConfigs, data);
+     }
+     tls13_DestroyEchConfigs(&parsedConfigs);
+diff --git a/lib/ssl/ssl.def b/lib/ssl/ssl.def
+index abc1234..def5678 100644
+--- a/lib/ssl/ssl.def
++++ b/lib/ssl/ssl.def
+@@ -240,6 +240,10 @@ SSL_SetDtls13VersionWorkaround;
+ ;+    local:
+ ;+*;
+ ;+};
++;+NSS_3.XX {       # ECH Auth APIs
++;+    global:
++SSL_SetEchAuthTrustAnchors;
++SSL_ClearEchAuthTrustAnchors;
++SSL_ComputeSpkiHash;
++;+} NSS_3.XX;
+ ;+
+diff --git a/lib/ssl/manifest.mn b/lib/ssl/manifest.mn
+index abc1234..def5678 100644
+--- a/lib/ssl/manifest.mn
++++ b/lib/ssl/manifest.mn
+@@ -58,6 +58,7 @@ CSRCS = \
+ 	tls13exthandle.c \
+ 	tls13hashstate.c \
+ 	tls13hkdf.c \
++	tls13echauth.c \
+ 	tls13psk.c \
+ 	tls13replay.c \
+ 	tls13signature.c \
