@@ -256,38 +256,19 @@ This tests:
 
 ## Wire Format
 
-This implementation supports two spec versions with different wire formats:
+Implements the split-extension format from draft-sullivan-tls-signed-ech-updates.
 
 ### Method Encoding
 
-| Method | Published (-00) | PR #2 |
-|--------|-----------------|-------|
-| none   | 0               | —     |
-| rpk    | 1               | 0     |
-| pkix   | 2               | 1     |
+| Method | Value |
+|--------|-------|
+| rpk    | 0     |
+| pkix   | 1     |
 
-### Published (-00): Combined Structure
+### ech_authinfo Extension
 
-Single `ech_auth` extension used everywhere:
+Policy extension for DNS HTTPS records:
 
-```
-struct {
-    ECHAuthMethod method;              // 1 byte: 0=none, 1=rpk, 2=pkix
-    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
-    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
-    uint64 not_after;                  // 8 bytes: MUST be 0 for PKIX
-    SignatureScheme algorithm;         // 2 bytes
-    opaque signature<1..2^16-1>;
-} ECHAuth;
-```
-
-For PKIX, `not_after` MUST be 0 (certificate validity governs expiration).
-
-### PR #2: Split Structure
-
-Two extensions with different purposes:
-
-**ech_authinfo** (policy, in DNS HTTPS record):
 ```
 struct {
     ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
@@ -295,20 +276,24 @@ struct {
 } ECHAuthInfo;
 ```
 
-**ech_auth** (signature, in TLS retry configs):
+### ech_auth Extension
+
+Signature extension for TLS retry configs:
+
 ```
 struct {
     ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
-    uint64 not_after;                  // 8 bytes: REQUIRED (even for PKIX)
+    uint64 not_after;                  // 8 bytes: Unix timestamp
     opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
     SignatureScheme algorithm;         // 2 bytes
     opaque signature<1..2^16-1>;
 } ECHAuthRetry;
 ```
 
-Key PR #2 changes:
-- `not_after` is REQUIRED for PKIX (allows replay limiting independent of cert lifetime)
+**Key features:**
 - Policy (trusted_keys) separated from signature for DNS efficiency
+- `not_after` required for both RPK and PKIX (replay limiting independent of cert lifetime)
+- PKIX authenticator contains X.509 certificate chain in TLS 1.3 format
 
 ## Security Considerations
 
