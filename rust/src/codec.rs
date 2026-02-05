@@ -1,4 +1,7 @@
-use crate::{ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature, Error, Result, SpecVersion, DEFAULT_SPEC_VERSION};
+use crate::{
+    DEFAULT_SPEC_VERSION, ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ECHAuthSignature,
+    Error, Result, SpecVersion,
+};
 
 impl ECHAuth {
     /// Encode to TLS presentation language format with spec version
@@ -57,13 +60,15 @@ impl ECHAuth {
 
         // Parse trusted_keys length
         if data.len() < offset + 2 {
-            return Err(Error::Decode("insufficient data for trusted_keys length".into()));
+            return Err(Error::Decode(
+                "insufficient data for trusted_keys length".into(),
+            ));
         }
         let keys_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;
 
         // Parse trusted_keys
-        if keys_len % 32 != 0 {
+        if !keys_len.is_multiple_of(32) {
             return Err(Error::Decode(format!(
                 "trusted_keys length {} not multiple of 32",
                 keys_len
@@ -83,7 +88,9 @@ impl ECHAuth {
 
         // Parse signature block
         if data.len() < offset + 2 {
-            return Err(Error::Decode("insufficient data for authenticator length".into()));
+            return Err(Error::Decode(
+                "insufficient data for authenticator length".into(),
+            ));
         }
         let auth_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;
@@ -119,7 +126,9 @@ impl ECHAuth {
             offset += 2;
 
             if data.len() < offset + 2 {
-                return Err(Error::Decode("insufficient data for signature length".into()));
+                return Err(Error::Decode(
+                    "insufficient data for signature length".into(),
+                ));
             }
             let sig_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
             offset += 2;
@@ -171,10 +180,10 @@ pub fn detect_version(data: &[u8]) -> Option<SpecVersion> {
     }
 
     match data[0] {
-        0 => Some(SpecVersion::PR2),    // PR2 rpk (or Published 'none' which we don't support)
-        1 => None,                       // Ambiguous: PR2 pkix OR Published rpk
+        0 => Some(SpecVersion::PR2), // PR2 rpk (or Published 'none' which we don't support)
+        1 => None,                   // Ambiguous: PR2 pkix OR Published rpk
         2 => Some(SpecVersion::Published), // Definitely Published pkix
-        _ => None,                       // Invalid method
+        _ => None,                   // Invalid method
     }
 }
 
@@ -212,12 +221,16 @@ impl ECHAuthInfo {
             .ok_or_else(|| Error::UnsupportedMethod(data[0]))?;
 
         if data.len() < 3 {
-            return Err(Error::Decode("insufficient data for trusted_keys length".into()));
+            return Err(Error::Decode(
+                "insufficient data for trusted_keys length".into(),
+            ));
         }
         let keys_len = u16::from_be_bytes([data[1], data[2]]) as usize;
 
-        if keys_len % 32 != 0 {
-            return Err(Error::Decode("trusted_keys length not multiple of 32".into()));
+        if !keys_len.is_multiple_of(32) {
+            return Err(Error::Decode(
+                "trusted_keys length not multiple of 32".into(),
+            ));
         }
         if data.len() < 3 + keys_len {
             return Err(Error::Decode("insufficient data for trusted_keys".into()));
@@ -230,7 +243,10 @@ impl ECHAuthInfo {
             trusted_keys.push(hash);
         }
 
-        Ok(ECHAuthInfo { method, trusted_keys })
+        Ok(ECHAuthInfo {
+            method,
+            trusted_keys,
+        })
     }
 
     /// Decode from TLS wire format (uses DEFAULT_SPEC_VERSION)
@@ -275,7 +291,9 @@ impl ECHAuthRetry {
         ]);
 
         if data.len() < 11 {
-            return Err(Error::Decode("insufficient data for authenticator length".into()));
+            return Err(Error::Decode(
+                "insufficient data for authenticator length".into(),
+            ));
         }
         let auth_len = u16::from_be_bytes([data[9], data[10]]) as usize;
 
@@ -292,7 +310,9 @@ impl ECHAuthRetry {
         offset += 2;
 
         if data.len() < offset + 2 {
-            return Err(Error::Decode("insufficient data for signature length".into()));
+            return Err(Error::Decode(
+                "insufficient data for signature length".into(),
+            ));
         }
         let sig_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;

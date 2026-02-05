@@ -5,8 +5,50 @@ draft-sullivan-tls-signed-ech-updates.
 
 ## Status
 
-**Work in Progress** - This is a reference implementation showing how
-ECH Auth would integrate with NSS's existing ECH support.
+**PKIX Implementation Complete** - Requires NSS development environment for testing.
+
+### What's Implemented ✅
+
+1. **Full PKIX Support**:
+   - Certificate chain parsing (TLS 1.3 format: 24-bit length-prefixed)
+   - Critical `id-pe-echConfigSigning` extension check (OID 1.3.6.1.5.5.7.1.99)
+   - SAN (Subject Alternative Name) matching against `public_name`
+   - Chain validation against NSS certificate database
+   - PKIX `not_after=0` compliance enforcement (per draft spec)
+
+2. **RPK Support**:
+   - Ed25519 and ECDSA P-256 signature verification
+   - SPKI hash computation and pinning
+   - Trust anchor API
+
+3. **API**:
+   - `SSL_SetEchAuthTrustAnchors()` - Configure trust anchors
+   - `SSL_SignEchConfig()` - Sign configs (RPK or PKIX)
+   - `SSL_ComputeSpkiHash()` - Compute SPKI hash
+
+### Testing Status ⚠️
+
+**Docker testing environment available** - No local NSS build required!
+
+Run interop tests with Docker:
+```bash
+cd nss
+./test-interop-docker.sh
+```
+
+See [`DOCKER_TESTING.md`](DOCKER_TESTING.md) for details.
+
+The Docker container:
+- Builds NSS 3.120 with ECH Auth patch
+- Compiles and runs interop tests
+- Tests against Go/Rust-signed configs in `test-vectors/`
+
+**Without Docker**, requires full NSS development environment:
+- NSS headers and libraries
+- NSPR (Netscape Portable Runtime)
+- NSS certificate database for chain validation
+
+Manual build: Apply the patch to NSS source and build with NSS's build system (see [Building](#apply-patch-and-build) below).
 
 ## Files
 
@@ -15,20 +57,17 @@ ECH Auth would integrate with NSS's existing ECH support.
 - `echauth_client.c` - Test client demonstrating ECH Auth flow
 - `nss_echauth.patch` - Patch for NSS integration
 
-## Integration Points
+## Features
 
-The ECH Auth verification hooks into NSS at these points:
-
-1. **ECHConfig parsing** (`tls13_DecodeEchConfigs` in `tls13ech.c`)
-   - Parse `ech_auth` extension from each config's extensions
-   - Store in extended `sslEchConfig` structure
-
-2. **Retry config handling** (`tls13_ClientHandleEchXtn` in `tls13exthandle.c`)
-   - After receiving retry configs, verify ECH Auth signatures
-   - Reject configs that fail verification if trust anchors are set
-
-3. **Socket structure** (`sslSocket` in `sslimpl.h`)
-   - Add `echAuthTrustAnchor` field for pinned SPKI hashes
+- **ECH Auth Extension**: Parsing and serialization
+- **RPK Support**: Ed25519 and ECDSA P-256 with SPKI pinning
+- **PKIX Support**: 
+  - Certificate chain verification (RFC 8446 format)
+  - `id-pe-echConfigSigning` extension check (must be critical)
+  - SAN matching against `public_name`
+  - `not_after=0` requirement enforcement
+- **Client API**: `SSL_SetEchAuthTrustAnchors`, `SSL_SignEchConfig`
+- **Automatic Verification**: Hooks into TLS handshake retry config processing
 
 ## New APIs
 

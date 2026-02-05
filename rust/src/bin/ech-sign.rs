@@ -1,6 +1,6 @@
 use ech_auth::{
-    sign_pkix_ecdsa, sign_pkix_ed25519, sign_rpk, sign_rpk_ecdsa, ECHAuth, ECHAuthMethod,
-    SpecVersion,
+    ECHAuth, ECHAuthMethod, SpecVersion, sign_pkix_ecdsa, sign_pkix_ed25519, sign_rpk,
+    sign_rpk_ecdsa,
 };
 use ed25519_dalek::SigningKey;
 use p256::ecdsa::SigningKey as EcdsaSigningKey;
@@ -19,7 +19,9 @@ fn print_usage() {
     eprintln!("  --algorithm ALG         ed25519 (default) or ecdsa-p256");
     eprintln!("  --key FILE              Signing key file (required)");
     eprintln!("  --not-after TIMESTAMP   Unix epoch seconds (required for RPK, ignored for PKIX)");
-    eprintln!("  --cert-chain FILE       Certificate chain for PKIX (DER format, required for PKIX)");
+    eprintln!(
+        "  --cert-chain FILE       Certificate chain for PKIX (DER format, required for PKIX)"
+    );
     eprintln!("  --version VER           Wire format: pr2 (default) or published");
 }
 

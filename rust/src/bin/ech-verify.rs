@@ -1,4 +1,4 @@
-use ech_auth::{verify_pkix_versioned, verify_rpk, ECHAuth, ECHAuthMethod, SPKIHash, SpecVersion};
+use ech_auth::{ECHAuth, ECHAuthMethod, SPKIHash, SpecVersion, verify_pkix_versioned, verify_rpk};
 use std::io::{self, Read};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};

@@ -211,11 +211,11 @@ func TestEncodeDecodeRoundtrip(t *testing.T) {
 		Signature:   sig,
 	}
 
-	// Encode
-	encoded := auth.Encode()
+	// Encode (Legacy)
+	encoded := auth.EncodeVersioned(SpecPublished)
 
-	// Decode
-	decoded, err := Decode(encoded)
+	// Decode (Legacy)
+	decoded, err := DecodeVersioned(encoded, SpecPublished)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -261,8 +261,8 @@ func TestDecodeNoSignature(t *testing.T) {
 		Signature:   nil,
 	}
 
-	encoded := auth.Encode()
-	decoded, err := Decode(encoded)
+	encoded := auth.EncodeVersioned(SpecPublished)
+	decoded, err := DecodeVersioned(encoded, SpecPublished)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -307,7 +307,12 @@ func TestVersionedEncodeDecodePR2(t *testing.T) {
 	auth := &Auth{
 		Method:      MethodRPK,
 		TrustedKeys: []SPKIHash{{42, 42, 42}},
-		Signature:   nil,
+		Signature: &Signature{
+			Authenticator: []byte("dummy auth"),
+			NotAfter:      1234567890,
+			Algorithm:     0x0403,
+			SignatureData: []byte("dummy sig"),
+		},
 	}
 
 	encoded := auth.EncodeVersioned(SpecPR2)

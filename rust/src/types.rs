@@ -160,8 +160,14 @@ mod tests {
     #[test]
     fn test_method_roundtrip_pr2() {
         // PR2: rpk=0, pkix=1
-        assert_eq!(ECHAuthMethod::from_wire(0, SpecVersion::PR2), Some(ECHAuthMethod::Rpk));
-        assert_eq!(ECHAuthMethod::from_wire(1, SpecVersion::PR2), Some(ECHAuthMethod::Pkix));
+        assert_eq!(
+            ECHAuthMethod::from_wire(0, SpecVersion::PR2),
+            Some(ECHAuthMethod::Rpk)
+        );
+        assert_eq!(
+            ECHAuthMethod::from_wire(1, SpecVersion::PR2),
+            Some(ECHAuthMethod::Pkix)
+        );
         assert_eq!(ECHAuthMethod::from_wire(2, SpecVersion::PR2), None);
 
         assert_eq!(ECHAuthMethod::Rpk.to_wire(SpecVersion::PR2), 0);
@@ -172,8 +178,14 @@ mod tests {
     fn test_method_roundtrip_published() {
         // Published: none=0 (unsupported), rpk=1, pkix=2
         assert_eq!(ECHAuthMethod::from_wire(0, SpecVersion::Published), None); // 'none' not supported
-        assert_eq!(ECHAuthMethod::from_wire(1, SpecVersion::Published), Some(ECHAuthMethod::Rpk));
-        assert_eq!(ECHAuthMethod::from_wire(2, SpecVersion::Published), Some(ECHAuthMethod::Pkix));
+        assert_eq!(
+            ECHAuthMethod::from_wire(1, SpecVersion::Published),
+            Some(ECHAuthMethod::Rpk)
+        );
+        assert_eq!(
+            ECHAuthMethod::from_wire(2, SpecVersion::Published),
+            Some(ECHAuthMethod::Pkix)
+        );
 
         assert_eq!(ECHAuthMethod::Rpk.to_wire(SpecVersion::Published), 1);
         assert_eq!(ECHAuthMethod::Pkix.to_wire(SpecVersion::Published), 2);

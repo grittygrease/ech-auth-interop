@@ -5,7 +5,6 @@ package echauth
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -16,12 +15,19 @@ const ContextLabel = "TLS-ECH-AUTH-v1"
 
 // Signature scheme identifiers (TLS SignatureScheme registry)
 const (
-	Ed25519SignatureScheme      uint16 = 0x0807
-	ECDSAP256SHA256Scheme       uint16 = 0x0403
+	Ed25519SignatureScheme uint16 = 0x0807
+	ECDSAP256SHA256Scheme  uint16 = 0x0403
 )
 
-// ECH Auth extension type (use 0xff01 for testing, TBD in final spec)
-const ECHAuthExtensionType uint16 = 0xff01
+// ECH Auth extension type (draft-sullivan-tls-signed-ech-updates uses 0xfe0d)
+const ECHAuthExtensionType uint16 = 0xfe0d
+
+// Cryptographic Constants
+const (
+	Ed25519PublicKeySize = 32
+	Ed25519SPKISize      = 44
+	SPKIHashSize         = 32
+)
 
 // SpecVersion identifies the wire format version
 type SpecVersion uint8
@@ -35,7 +41,7 @@ const (
 
 // DefaultSpecVersion is used by non-versioned APIs.
 // Change this to switch the entire library's wire format.
-var DefaultSpecVersion = SpecPR2
+var DefaultSpecVersion = SpecPublished
 
 // Method identifies the authentication method
 type Method uint8
@@ -113,14 +119,14 @@ type Auth struct {
 
 // Error types
 var (
-	ErrDecode             = errors.New("echauth: decode error")
-	ErrSignatureInvalid   = errors.New("echauth: signature verification failed")
-	ErrUntrustedKey       = errors.New("echauth: SPKI hash not in trusted_keys")
-	ErrExpired            = errors.New("echauth: config expired")
-	ErrUnsupportedMethod  = errors.New("echauth: unsupported method")
-	ErrUnsupportedAlgo    = errors.New("echauth: unsupported algorithm")
-	ErrSignatureMissing   = errors.New("echauth: signature block missing")
-	ErrInvalidSPKI        = errors.New("echauth: invalid SPKI format")
+	ErrDecode            = errors.New("echauth: decode error")
+	ErrSignatureInvalid  = errors.New("echauth: signature verification failed")
+	ErrUntrustedKey      = errors.New("echauth: SPKI hash not in trusted_keys")
+	ErrExpired           = errors.New("echauth: config expired")
+	ErrUnsupportedMethod = errors.New("echauth: unsupported method")
+	ErrUnsupportedAlgo   = errors.New("echauth: unsupported algorithm")
+	ErrSignatureMissing  = errors.New("echauth: signature block missing")
+	ErrInvalidSPKI       = errors.New("echauth: invalid SPKI format")
 )
 
 // Ed25519 SPKI prefix (DER encoding)
@@ -134,10 +140,10 @@ var ed25519SPKIPrefix = []byte{
 
 // EncodeEd25519SPKI encodes an Ed25519 public key as DER SPKI
 func EncodeEd25519SPKI(publicKey []byte) []byte {
-	if len(publicKey) != 32 {
+	if len(publicKey) != Ed25519PublicKeySize {
 		return nil
 	}
-	spki := make([]byte, 44)
+	spki := make([]byte, Ed25519SPKISize)
 	copy(spki, ed25519SPKIPrefix)
 	copy(spki[12:], publicKey)
 	return spki
@@ -145,8 +151,8 @@ func EncodeEd25519SPKI(publicKey []byte) []byte {
 
 // ExtractEd25519PublicKey extracts the public key from an Ed25519 SPKI
 func ExtractEd25519PublicKey(spki []byte) ([]byte, error) {
-	if len(spki) != 44 {
-		return nil, fmt.Errorf("%w: expected 44 bytes, got %d", ErrInvalidSPKI, len(spki))
+	if len(spki) != Ed25519SPKISize {
+		return nil, fmt.Errorf("%w: expected %d bytes, got %d", ErrInvalidSPKI, Ed25519SPKISize, len(spki))
 	}
 	// Validate prefix
 	for i := 0; i < 12; i++ {
@@ -244,57 +250,53 @@ func VerifyRPK(echConfigTBS []byte, auth *Auth, now time.Time) error {
 
 // EncodeVersioned serializes Auth to TLS wire format with spec version
 func (a *Auth) EncodeVersioned(ver SpecVersion) []byte {
-	// Calculate size
-	size := 1 // method
-	size += 2 // trusted_keys length
-	size += len(a.TrustedKeys) * 32
-
-	// Signature block (no outer length prefix per TLS presentation language)
-	if a.Signature != nil {
-		size += 2 + len(a.Signature.Authenticator) // authenticator
-		size += 8                                   // not_after
-		size += 2                                   // algorithm
-		size += 2 + len(a.Signature.SignatureData)  // signature
+	// If PR2 (Split) and Method is RPK (0), use AuthRetry format
+	// NOTE: If Method is PKIX (1) in PR2, it might still require AuthRetry format?
+	// Draft says ech_auth extension uses AuthRetry structure.
+	if ver == SpecPR2 {
+		if a.Signature == nil {
+			// PR2 AuthRetry MUST have signature (even if zeroed)
+			// But if struct is empty?
+			return []byte{uint8(a.Method)}
+		}
+		retry := &AuthRetry{
+			Method:        a.Method,
+			NotAfter:      a.Signature.NotAfter,
+			Authenticator: a.Signature.Authenticator,
+			Algorithm:     a.Signature.Algorithm,
+			Signature:     a.Signature.SignatureData,
+		}
+		return retry.EncodeVersioned(ver)
 	}
 
-	buf := make([]byte, size)
-	offset := 0
+	// Legacy (Combined) Format
+	w := NewWriter()
 
 	// Method (version-aware)
-	buf[offset] = a.Method.ToWire(ver)
-	offset++
+	w.PutUint8(a.Method.ToWire(ver))
 
 	// Trusted keys
-	binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.TrustedKeys)*32))
-	offset += 2
+	w.PutUint16(uint16(len(a.TrustedKeys) * SPKIHashSize))
 	for _, key := range a.TrustedKeys {
-		copy(buf[offset:], key[:])
-		offset += 32
+		w.PutBytes(key[:])
 	}
 
 	// Signature block (directly written, no outer length prefix)
 	if a.Signature != nil {
 		// Authenticator
-		binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.Signature.Authenticator)))
-		offset += 2
-		copy(buf[offset:], a.Signature.Authenticator)
-		offset += len(a.Signature.Authenticator)
+		w.PutVector16(a.Signature.Authenticator)
 
 		// NotAfter
-		binary.BigEndian.PutUint64(buf[offset:], a.Signature.NotAfter)
-		offset += 8
+		w.PutUint64(a.Signature.NotAfter)
 
 		// Algorithm
-		binary.BigEndian.PutUint16(buf[offset:], a.Signature.Algorithm)
-		offset += 2
+		w.PutUint16(a.Signature.Algorithm)
 
 		// Signature data
-		binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.Signature.SignatureData)))
-		offset += 2
-		copy(buf[offset:], a.Signature.SignatureData)
+		w.PutVector16(a.Signature.SignatureData)
 	}
 
-	return buf
+	return w.Bytes()
 }
 
 // Encode serializes Auth to TLS wire format (uses DefaultSpecVersion)
@@ -304,120 +306,120 @@ func (a *Auth) Encode() []byte {
 
 // DecodeVersioned parses Auth from TLS wire format with spec version
 func DecodeVersioned(data []byte, ver SpecVersion) (*Auth, error) {
-	if len(data) < 3 {
-		return nil, fmt.Errorf("%w: insufficient data", ErrDecode)
+	if len(data) == 0 {
+		return nil, ErrDecode
 	}
 
-	offset := 0
+	// PR2 Logic: Use AuthRetry
+	if ver == SpecPR2 {
+		retry, err := DecodeAuthRetryVersioned(data, ver)
+		if err != nil {
+			return nil, err
+		}
+		return &Auth{
+			Method:      retry.Method,
+			TrustedKeys: nil, // AuthRetry doesn't have trusted keys
+			Signature: &Signature{
+				Authenticator: retry.Authenticator,
+				NotAfter:      retry.NotAfter,
+				Algorithm:     retry.Algorithm,
+				SignatureData: retry.Signature,
+			},
+		}, nil
+	}
+
+	// Legacy Logic
+	r := NewReader(data)
 	auth := &Auth{}
 
 	// Method (version-aware)
-	method, err := MethodFromWire(data[offset], ver)
+	methodByte, err := r.ReadUint8()
+	if err != nil {
+		return nil, err
+	}
+	method, err := MethodFromWire(methodByte, ver)
 	if err != nil {
 		return nil, err
 	}
 	auth.Method = method
-	offset++
 
 	// Trusted keys
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for trusted_keys length", ErrDecode)
+	keysLen, err := r.ReadUint16()
+	if err != nil {
+		return nil, err
 	}
-	keysLen := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-
-	if keysLen%32 != 0 {
-		return nil, fmt.Errorf("%w: trusted_keys length not multiple of 32", ErrDecode)
-	}
-	if len(data) < offset+keysLen {
-		return nil, fmt.Errorf("%w: insufficient data for trusted_keys", ErrDecode)
+	if int(keysLen)%SPKIHashSize != 0 {
+		return nil, fmt.Errorf("%w: trusted_keys length not multiple of %d", ErrDecode, SPKIHashSize)
 	}
 
-	numKeys := keysLen / 32
+	numKeys := int(keysLen) / SPKIHashSize
 	auth.TrustedKeys = make([]SPKIHash, numKeys)
 	for i := 0; i < numKeys; i++ {
-		copy(auth.TrustedKeys[i][:], data[offset:offset+32])
-		offset += 32
+		keyBytes, err := r.ReadBytes(SPKIHashSize)
+		if err != nil {
+			return nil, err
+		}
+		copy(auth.TrustedKeys[i][:], keyBytes)
 	}
 
 	// No more data means no signature
-	if offset >= len(data) {
+	if r.Empty() {
 		return auth, nil
 	}
 
 	sig := &Signature{}
 
 	// Authenticator
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for authenticator length", ErrDecode)
+	sig.Authenticator, err = r.ReadVector16()
+	if err != nil {
+		return nil, err
 	}
-	authLen := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-
-	if len(data) < offset+authLen {
-		return nil, fmt.Errorf("%w: insufficient data for authenticator", ErrDecode)
-	}
-	sig.Authenticator = make([]byte, authLen)
-	copy(sig.Authenticator, data[offset:offset+authLen])
-	offset += authLen
 
 	// NotAfter
-	if len(data) < offset+8 {
-		return nil, fmt.Errorf("%w: insufficient data for not_after", ErrDecode)
+	sig.NotAfter, err = r.ReadUint64()
+	if err != nil {
+		return nil, err
 	}
-	sig.NotAfter = binary.BigEndian.Uint64(data[offset:])
-	offset += 8
 
 	// Algorithm
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for algorithm", ErrDecode)
+	sig.Algorithm, err = r.ReadUint16()
+	if err != nil {
+		return nil, err
 	}
-	sig.Algorithm = binary.BigEndian.Uint16(data[offset:])
-	offset += 2
 
 	// Signature data
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for signature length", ErrDecode)
+	sig.SignatureData, err = r.ReadVector16()
+	if err != nil {
+		return nil, err
 	}
-	sigDataLen := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-
-	if len(data) < offset+sigDataLen {
-		return nil, fmt.Errorf("%w: insufficient data for signature data", ErrDecode)
-	}
-	sig.SignatureData = make([]byte, sigDataLen)
-	copy(sig.SignatureData, data[offset:offset+sigDataLen])
 
 	auth.Signature = sig
 	return auth, nil
 }
 
-// Decode parses Auth from TLS wire format (uses DefaultSpecVersion)
+// Decode parses Auth from TLS wire format (uses heuristic version detection)
 func Decode(data []byte) (*Auth, error) {
-	return DecodeVersioned(data, DefaultSpecVersion)
+	ver, ok := DetectVersion(data)
+	if !ok {
+		ver = DefaultSpecVersion
+	}
+	return DecodeVersioned(data, ver)
 }
 
 // DetectVersion heuristically detects the spec version from encoded data.
-// Returns (version, ok) where ok is false if detection is ambiguous or data invalid.
-//
-// Detection logic:
-// - method=2: definitely Published (pkix)
-// - method=0: likely PR2 (rpk) but could be Published 'none'
-// - method=1: ambiguous (PR2 pkix vs Published rpk)
 func DetectVersion(data []byte) (SpecVersion, bool) {
 	if len(data) == 0 {
 		return 0, false
 	}
-
 	switch data[0] {
 	case 0:
-		return SpecPR2, true    // PR2 rpk (Published 'none' not supported)
+		return SpecPR2, true
 	case 1:
-		return 0, false         // Ambiguous: PR2 pkix OR Published rpk
+		return 0, false
 	case 2:
-		return SpecPublished, true // Definitely Published pkix
+		return SpecPublished, true
 	default:
-		return 0, false         // Invalid method
+		return 0, false
 	}
 }
 
@@ -444,22 +446,13 @@ type AuthRetry struct {
 
 // EncodeVersioned serializes AuthInfo to wire format
 func (a *AuthInfo) EncodeVersioned(ver SpecVersion) []byte {
-	size := 1 + 2 + len(a.TrustedKeys)*32
-	buf := make([]byte, size)
-	offset := 0
-
-	buf[offset] = a.Method.ToWire(ver)
-	offset++
-
-	binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.TrustedKeys)*32))
-	offset += 2
-
+	w := NewWriter()
+	w.PutUint8(a.Method.ToWire(ver))
+	w.PutUint16(uint16(len(a.TrustedKeys) * SPKIHashSize))
 	for _, key := range a.TrustedKeys {
-		copy(buf[offset:], key[:])
-		offset += 32
+		w.PutBytes(key[:])
 	}
-
-	return buf
+	return w.Bytes()
 }
 
 // Encode serializes AuthInfo (uses DefaultSpecVersion)
@@ -469,27 +462,32 @@ func (a *AuthInfo) Encode() []byte {
 
 // DecodeAuthInfoVersioned parses AuthInfo from wire format
 func DecodeAuthInfoVersioned(data []byte, ver SpecVersion) (*AuthInfo, error) {
-	if len(data) < 3 {
-		return nil, fmt.Errorf("%w: insufficient data", ErrDecode)
+	r := NewReader(data)
+	methodByte, err := r.ReadUint8()
+	if err != nil {
+		return nil, err
 	}
-
-	method, err := MethodFromWire(data[0], ver)
+	method, err := MethodFromWire(methodByte, ver)
 	if err != nil {
 		return nil, err
 	}
 
-	keysLen := int(binary.BigEndian.Uint16(data[1:3]))
-	if keysLen%32 != 0 {
-		return nil, fmt.Errorf("%w: trusted_keys length not multiple of 32", ErrDecode)
+	keysLen, err := r.ReadUint16()
+	if err != nil {
+		return nil, err
 	}
-	if len(data) < 3+keysLen {
-		return nil, fmt.Errorf("%w: insufficient data for trusted_keys", ErrDecode)
+	if int(keysLen)%SPKIHashSize != 0 {
+		return nil, fmt.Errorf("%w: trusted_keys length not multiple of %d", ErrDecode, SPKIHashSize)
 	}
 
-	numKeys := keysLen / 32
+	numKeys := int(keysLen) / SPKIHashSize
 	trustedKeys := make([]SPKIHash, numKeys)
 	for i := 0; i < numKeys; i++ {
-		copy(trustedKeys[i][:], data[3+i*32:3+(i+1)*32])
+		keyBytes, err := r.ReadBytes(SPKIHashSize)
+		if err != nil {
+			return nil, err
+		}
+		copy(trustedKeys[i][:], keyBytes)
 	}
 
 	return &AuthInfo{Method: method, TrustedKeys: trustedKeys}, nil
@@ -502,29 +500,13 @@ func DecodeAuthInfo(data []byte) (*AuthInfo, error) {
 
 // EncodeVersioned serializes AuthRetry to wire format
 func (a *AuthRetry) EncodeVersioned(ver SpecVersion) []byte {
-	size := 1 + 8 + 2 + len(a.Authenticator) + 2 + 2 + len(a.Signature)
-	buf := make([]byte, size)
-	offset := 0
-
-	buf[offset] = a.Method.ToWire(ver)
-	offset++
-
-	binary.BigEndian.PutUint64(buf[offset:], a.NotAfter)
-	offset += 8
-
-	binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.Authenticator)))
-	offset += 2
-	copy(buf[offset:], a.Authenticator)
-	offset += len(a.Authenticator)
-
-	binary.BigEndian.PutUint16(buf[offset:], a.Algorithm)
-	offset += 2
-
-	binary.BigEndian.PutUint16(buf[offset:], uint16(len(a.Signature)))
-	offset += 2
-	copy(buf[offset:], a.Signature)
-
-	return buf
+	w := NewWriter()
+	w.PutUint8(a.Method.ToWire(ver))
+	w.PutUint64(a.NotAfter)
+	w.PutVector16(a.Authenticator)
+	w.PutUint16(a.Algorithm)
+	w.PutVector16(a.Signature)
+	return w.Bytes()
 }
 
 // Encode serializes AuthRetry (uses DefaultSpecVersion)
@@ -534,45 +516,35 @@ func (a *AuthRetry) Encode() []byte {
 
 // DecodeAuthRetryVersioned parses AuthRetry from wire format
 func DecodeAuthRetryVersioned(data []byte, ver SpecVersion) (*AuthRetry, error) {
-	if len(data) < 11 {
-		return nil, fmt.Errorf("%w: insufficient data", ErrDecode)
-	}
-
-	offset := 0
-	method, err := MethodFromWire(data[offset], ver)
+	r := NewReader(data)
+	methodByte, err := r.ReadUint8()
 	if err != nil {
 		return nil, err
 	}
-	offset++
-
-	notAfter := binary.BigEndian.Uint64(data[offset:])
-	offset += 8
-
-	authLen := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	if len(data) < offset+authLen {
-		return nil, fmt.Errorf("%w: insufficient data for authenticator", ErrDecode)
+	method, err := MethodFromWire(methodByte, ver)
+	if err != nil {
+		return nil, err
 	}
-	authenticator := make([]byte, authLen)
-	copy(authenticator, data[offset:offset+authLen])
-	offset += authLen
 
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for algorithm", ErrDecode)
+	notAfter, err := r.ReadUint64()
+	if err != nil {
+		return nil, err
 	}
-	algorithm := binary.BigEndian.Uint16(data[offset:])
-	offset += 2
 
-	if len(data) < offset+2 {
-		return nil, fmt.Errorf("%w: insufficient data for signature length", ErrDecode)
+	authenticator, err := r.ReadVector16()
+	if err != nil {
+		return nil, err
 	}
-	sigLen := int(binary.BigEndian.Uint16(data[offset:]))
-	offset += 2
-	if len(data) < offset+sigLen {
-		return nil, fmt.Errorf("%w: insufficient data for signature", ErrDecode)
+
+	algorithm, err := r.ReadUint16()
+	if err != nil {
+		return nil, err
 	}
-	signature := make([]byte, sigLen)
-	copy(signature, data[offset:offset+sigLen])
+
+	signature, err := r.ReadVector16()
+	if err != nil {
+		return nil, err
+	}
 
 	return &AuthRetry{
 		Method:        method,

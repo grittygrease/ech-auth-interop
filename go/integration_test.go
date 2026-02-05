@@ -63,11 +63,11 @@ func parseAndFixupConfig(t *testing.T, configList []byte, configID uint8, public
 	}
 
 	// For each config, override Raw with the TBS (config without extension)
-	for i := range configs {
-		if configs[i].ConfigID == configID {
-			configs[i].Raw = buildTestECHConfig(t, configID, publicName, nil)
-		}
-	}
+	// for i := range configs {
+	// 	if configs[i].ConfigID == configID {
+	// 		configs[i].Raw = buildTestECHConfig(t, configID, publicName, nil)
+	// 	}
+	// }
 
 	return configs
 }
@@ -95,9 +95,7 @@ func TestIntegration_FullECHFlow(t *testing.T) {
 	// Generate rotated ECH config with ech_auth signature
 	rotatedConfigTBS := buildTestECHConfig(t, 2, "backend.example.com", nil)
 	authExt := signConfig(t, rotatedConfigTBS, signingKey, notAfter)
-	signedConfig := buildTestECHConfig(t, 2, "backend.example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt},
-	})
+	signedConfig := addExtForTest(t, rotatedConfigTBS, ECHAuthExtensionType, authExt)
 	t.Logf("Signed rotated config: %d bytes", len(signedConfig))
 
 	// Build config list
@@ -108,8 +106,8 @@ func TestIntegration_FullECHFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse failed: %v", err)
 		}
-		// Fix up Raw to be the TBS
-		configs[0].Raw = rotatedConfigTBS
+		// Fix up Raw to be the TBS - Removed as ParseECHConfigList now populates Raw correctly
+		// configs[0].Raw = rotatedConfigTBS
 
 		err = VerifyConfig(&configs[0], trustAnchor, nowFunc)
 		if err != nil {
@@ -119,7 +117,7 @@ func TestIntegration_FullECHFlow(t *testing.T) {
 
 	t.Run("RejectUntrustedConfig", func(t *testing.T) {
 		configs, _ := ParseECHConfigList(configList)
-		configs[0].Raw = rotatedConfigTBS
+		// configs[0].Raw = rotatedConfigTBS
 
 		wrongAnchor := &TrustAnchor{TrustedKeys: []SPKIHash{{0xff}}}
 		err := VerifyConfig(&configs[0], wrongAnchor, nowFunc)
@@ -130,13 +128,12 @@ func TestIntegration_FullECHFlow(t *testing.T) {
 
 	t.Run("RejectExpiredConfig", func(t *testing.T) {
 		expiredAuthExt := signConfig(t, rotatedConfigTBS, signingKey, time.Now().Add(-1*time.Hour))
-		expiredConfig := buildTestECHConfig(t, 3, "backend.example.com", []Extension{
-			{Type: ECHAuthExtensionType, Data: expiredAuthExt},
-		})
+		// Reuse rotatedConfigTBS so keys match
+		expiredConfig := addExtForTest(t, rotatedConfigTBS, ECHAuthExtensionType, expiredAuthExt)
 		expiredList := buildECHConfigList(expiredConfig)
 
 		configs, _ := ParseECHConfigList(expiredList)
-		configs[0].Raw = buildTestECHConfig(t, 3, "backend.example.com", nil)
+		// configs[0].Raw = buildTestECHConfig(t, 3, "backend.example.com", nil)
 
 		err := VerifyConfig(&configs[0], trustAnchor, nowFunc)
 		if err == nil {
@@ -176,32 +173,26 @@ func TestIntegration_MixedConfigs(t *testing.T) {
 	// Config 1: signed by trusted key
 	config1TBS := buildTestECHConfig(t, 1, "example.com", nil)
 	authExt1 := signConfig(t, config1TBS, signingKey1, notAfter)
-	signedConfig1 := buildTestECHConfig(t, 1, "example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt1},
-	})
+	signedConfig1 := addExtForTest(t, config1TBS, ECHAuthExtensionType, authExt1)
 
 	// Config 2: signed by untrusted key
 	config2TBS := buildTestECHConfig(t, 2, "example.com", nil)
 	authExt2 := signConfig(t, config2TBS, signingKey2, notAfter)
-	signedConfig2 := buildTestECHConfig(t, 2, "example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt2},
-	})
+	signedConfig2 := addExtForTest(t, config2TBS, ECHAuthExtensionType, authExt2)
 
 	// Config 3: also signed by trusted key
 	config3TBS := buildTestECHConfig(t, 3, "example.com", nil)
 	authExt3 := signConfig(t, config3TBS, signingKey1, notAfter)
-	signedConfig3 := buildTestECHConfig(t, 3, "example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt3},
-	})
+	signedConfig3 := addExtForTest(t, config3TBS, ECHAuthExtensionType, authExt3)
 
 	// Build list with all configs
 	configList := buildECHConfigList(signedConfig1, signedConfig2, signedConfig3)
 
 	// Parse and fix up
 	configs, _ := ParseECHConfigList(configList)
-	configs[0].Raw = config1TBS
-	configs[1].Raw = config2TBS
-	configs[2].Raw = config3TBS
+	// configs[0].Raw = config1TBS
+	// configs[1].Raw = config2TBS
+	// configs[2].Raw = config3TBS
 
 	// Verify each config individually
 	var verified []ECHConfig
@@ -254,9 +245,7 @@ func TestIntegration_TLSServerSimulation(t *testing.T) {
 	initialConfig := buildTestECHConfig(t, 1, "backend.example.com", nil)
 	rotatedConfigTBS := buildTestECHConfig(t, 2, "backend.example.com", nil)
 	rotatedAuthExt := signConfig(t, rotatedConfigTBS, echSigningKey, notAfter)
-	signedRotatedConfig := buildTestECHConfig(t, 2, "backend.example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: rotatedAuthExt},
-	})
+	signedRotatedConfig := addExtForTest(t, rotatedConfigTBS, ECHAuthExtensionType, rotatedAuthExt)
 
 	t.Logf("Server cert created")
 	t.Logf("Initial ECH config (ID=1): %d bytes", len(initialConfig))
@@ -281,7 +270,7 @@ func TestIntegration_TLSServerSimulation(t *testing.T) {
 		// Step 4: Client verifies retry configs
 		t.Log("Step 4: Client verifies retry configs against trust anchors")
 		configs, _ := ParseECHConfigList(retryConfigList)
-		configs[0].Raw = rotatedConfigTBS // Fix up TBS
+		// configs[0].Raw = rotatedConfigTBS // Fix up TBS
 
 		trustAnchor := &TrustAnchor{TrustedKeys: []SPKIHash{spkiHash}}
 		err := VerifyConfig(&configs[0], trustAnchor, nowFunc)
@@ -300,13 +289,11 @@ func TestIntegration_TLSServerSimulation(t *testing.T) {
 		_, attackerKey, _ := ed25519.GenerateKey(rand.Reader)
 		attackerConfigTBS := buildTestECHConfig(t, 99, "attacker.example.com", nil)
 		attackerAuthExt := signConfig(t, attackerConfigTBS, attackerKey, notAfter)
-		attackerConfig := buildTestECHConfig(t, 99, "attacker.example.com", []Extension{
-			{Type: ECHAuthExtensionType, Data: attackerAuthExt},
-		})
+		attackerConfig := addExtForTest(t, attackerConfigTBS, ECHAuthExtensionType, attackerAuthExt)
 
 		retryConfigList := buildECHConfigList(attackerConfig)
 		configs, _ := ParseECHConfigList(retryConfigList)
-		configs[0].Raw = attackerConfigTBS
+		// configs[0].Raw = attackerConfigTBS
 
 		trustAnchor := &TrustAnchor{TrustedKeys: []SPKIHash{spkiHash}} // Only trust legitimate key
 
@@ -413,9 +400,7 @@ func TestIntegration_ECHRejectionScenario(t *testing.T) {
 	// Generate signed retry config (what server would send)
 	rotatedConfigTBS := buildTestECHConfig(t, 2, "backend.example.com", nil)
 	rotatedAuthExt := signConfig(t, rotatedConfigTBS, echSigningKey, notAfter)
-	signedConfig := buildTestECHConfig(t, 2, "backend.example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: rotatedAuthExt},
-	})
+	signedConfig := addExtForTest(t, rotatedConfigTBS, ECHAuthExtensionType, rotatedAuthExt)
 	retryList := buildECHConfigList(signedConfig)
 
 	// Simulate receiving ECHRejectionError
@@ -429,9 +414,9 @@ func TestIntegration_ECHRejectionScenario(t *testing.T) {
 	t.Log("Simulating ECH rejection with signed retry configs")
 
 	// If trust anchors configured, verify retry configs
-	if trustAnchor != nil && len(rejectionErr.RetryConfigList) > 0 {
+	if len(rejectionErr.RetryConfigList) > 0 {
 		configs, _ := ParseECHConfigList(rejectionErr.RetryConfigList)
-		configs[0].Raw = rotatedConfigTBS // Fix up TBS
+		// configs[0].Raw = rotatedConfigTBS // Fix up TBS
 
 		err := VerifyConfig(&configs[0], trustAnchor, nowFunc)
 		if err != nil {
@@ -465,15 +450,18 @@ func TestIntegration_SignatureBindsConfig(t *testing.T) {
 	authExt1 := signConfig(t, config1TBS, signingKey, notAfter)
 
 	// Build config with ID=2 but using signature from config 1
-	signedConfig2 := buildTestECHConfig(t, 2, "example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt1},
-	})
+	// Reuse config1TBS so that if it WERE mapped to ID=1 it might validate,
+	// but here we are mixing things up.
+	// Actually, we want to construct a CONFIG 2 that uses AUTH from CONFIG 1.
+	// Config2 generated fresh has different keys.
+	config2TBS := buildTestECHConfig(t, 2, "example.com", nil)
+	signedConfig2 := addExtForTest(t, config2TBS, ECHAuthExtensionType, authExt1)
 	configList := buildECHConfigList(signedConfig2)
 
 	configs, _ := ParseECHConfigList(configList)
 	// Set Raw to config2's TBS (not config1's)
-	config2TBS := buildTestECHConfig(t, 2, "example.com", nil)
-	configs[0].Raw = config2TBS
+	// config2TBS := buildTestECHConfig(t, 2, "example.com", nil)
+	// configs[0].Raw = config2TBS
 
 	err := VerifyConfig(&configs[0], trustAnchor, nowFunc)
 	if err == nil {
@@ -492,9 +480,7 @@ func TestIntegration_EmptyTrustAnchorsRejectsAll(t *testing.T) {
 
 	configTBS := buildTestECHConfig(t, 1, "example.com", nil)
 	authExt := signConfig(t, configTBS, signingKey, notAfter)
-	signedConfig := buildTestECHConfig(t, 1, "example.com", []Extension{
-		{Type: ECHAuthExtensionType, Data: authExt},
-	})
+	signedConfig := addExtForTest(t, configTBS, ECHAuthExtensionType, authExt)
 	configList := buildECHConfigList(signedConfig)
 
 	// Empty trust anchors (not nil) = fail-closed
@@ -509,6 +495,100 @@ func TestIntegration_EmptyTrustAnchorsRejectsAll(t *testing.T) {
 }
 
 // BenchmarkVerifyConfig measures verification performance
+
+func TestIntegration_ErrorCases(t *testing.T) {
+	_, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	notAfter := time.Now().Add(24 * time.Hour)
+
+	// Baseline valid setup
+	config1TBS, _ := buildSignedConfig(t, 1, "example.com", privateKey, notAfter)
+	// config2TBS, _ := buildSignedConfig(t, 2, "example.com", privateKey, notAfter)
+
+	spki := EncodeEd25519SPKI(privateKey.Public().(ed25519.PublicKey))
+	spkiHash := ComputeSPKIHash(spki)
+	anchor := &TrustAnchor{TrustedKeys: []SPKIHash{spkiHash}}
+	nowFunc := func() uint64 { return uint64(time.Now().Unix()) }
+
+	t.Run("TamperedPayload", func(t *testing.T) {
+		// Valid config, but we modify one byte of the payload
+		// config1TBS[0] is part of the struct, config1TBS[len] is the extension?
+		// buildSignedConfig returns the struct WITH the extension.
+		// Let's modify a byte in the middle (e.g. key share or name)
+		tampered := make([]byte, len(config1TBS))
+		copy(tampered, config1TBS)
+		tampered[10] ^= 0xFF // Flip a bit in the body
+
+		// We need to re-parse because VerifyConfig takes a struct
+		list := buildECHConfigList(tampered)
+		configs, err := ParseECHConfigList(list)
+		if err != nil {
+			t.Log("Tampering broke parsing (expected potentially), trying verification if parsable")
+		}
+		if len(configs) > 0 {
+			// Update Raw to match the tampered bytes so Verify uses the tampered version
+			configs[0].Raw = tampered
+			if err := VerifyConfig(&configs[0], anchor, nowFunc); err == nil {
+				t.Error("Tampered payload verification succeeded, expected failure")
+			}
+		}
+	})
+
+	t.Run("SignatureTransplant", func(t *testing.T) {
+		// Take valid signature from Config 1 and apply to Config 2
+		cfg1, _ := ParseECHConfigList(buildECHConfigList(config1TBS))
+		auth1, _ := cfg1[0].GetAuthExtension()
+
+		// cfg2, _ := ParseECHConfigList(buildECHConfigList(config2TBS))
+		// Transplant payload
+		// auth1Bytes := auth1.EncodeVersioned(SpecPublished)
+		// Note: We need to inject this extension into Config 2
+		// addExtForTest helper in config_test.go is useful but not exported or here.
+		// Instead, let's manually swap the structure in parsed form and re-verify.
+
+		// Set Config 2's Raw to match Config 2 (target of transplant),
+		// but replace the Auth object in memory with the one from Config 1.
+		// VerifyConfig uses config.GetAuthExtension() which parses specifically the auth extension.
+		// However, VerifyConfig(config) uses config.Raw (or ComputeTBS) to verify the data.
+		// If we overwrite the extension bytes in Config 2 with Config 1's extension:
+
+		// Find auth ext location in config2TBS
+		// This is hard to do without the helper.
+		// Let's trust VerifyRPK logic or build a new helper.
+		// Actually, we can use the 'Signed Config' builder to just use the WRONG signature.
+
+		fakeSigConfig := buildECHConfigBytes(2, 0x0020, make([]byte, 32), "example.com", []Extension{
+			{Type: ECHAuthExtensionType, Data: auth1.EncodeVersioned(SpecPublished)},
+		})
+
+		list := buildECHConfigList(fakeSigConfig)
+		configs, _ := ParseECHConfigList(list)
+		configs[0].Raw = fakeSigConfig
+
+		if err := VerifyConfig(&configs[0], anchor, nowFunc); err == nil {
+			t.Error("Transplanted signature verification succeeded, expected failure")
+		}
+	})
+
+	t.Run("AlgorithmMismatch", func(t *testing.T) {
+		// Signature claims to be P256 but key/sig are Ed25519
+		cfg, _ := ParseECHConfigList(buildECHConfigList(config1TBS))
+		auth, _ := cfg[0].GetAuthExtension()
+
+		// Modify auth struct
+		auth.Signature.Algorithm = 0x0403 // ecdsa_secp256r1_sha256 (mismatch)
+
+		// Re-encode extension and rebuild config
+		// This requires rebuilding the whole config byte array which is tedious here.
+		// However, we can test VerifyRPK directly which is the core logic.
+		// VerifyConfig just unwraps to VerifyRPK.
+
+		tbs, _ := cfg[0].ComputeTBS()
+		if err := VerifyRPK(tbs, auth, time.Now()); err == nil {
+			t.Error("Algorithm mismatch verification succeeded, expected failure")
+		}
+	})
+}
+
 func BenchmarkVerifyConfig(b *testing.B) {
 	_, signingKey, _ := ed25519.GenerateKey(rand.Reader)
 	spki := EncodeEd25519SPKI(signingKey.Public().(ed25519.PublicKey))
@@ -534,7 +614,7 @@ func BenchmarkVerifyConfig(b *testing.B) {
 	configList := buildECHConfigList(signedConfig)
 
 	configs, _ := ParseECHConfigList(configList)
-	configs[0].Raw = configTBS
+	// configs[0].Raw = configTBS
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

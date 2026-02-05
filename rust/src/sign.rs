@@ -1,4 +1,4 @@
-use crate::{ECHAuthSignature, ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME};
+use crate::{ECDSA_SECP256R1_SHA256, ECHAuthSignature, ED25519_SIGNATURE_SCHEME};
 use ed25519_dalek::{Signer, SigningKey};
 use p256::ecdsa::SigningKey as EcdsaSigningKey;
 use sha2::{Digest, Sha256};
@@ -125,8 +125,8 @@ pub fn sign_rpk_ecdsa(
 
     // Sign the hash directly (not using Signer trait which may double-hash)
     use p256::ecdsa::signature::hazmat::PrehashSigner;
-    let signature: p256::ecdsa::Signature = signing_key.sign_prehash(&hash)
-        .expect("failed to sign");
+    let signature: p256::ecdsa::Signature =
+        signing_key.sign_prehash(&hash).expect("failed to sign");
 
     ECHAuthSignature {
         authenticator: spki,
@@ -206,8 +206,8 @@ pub fn sign_pkix_ecdsa(
 
     // Sign the hash directly (not using Signer trait which may double-hash)
     use p256::ecdsa::signature::hazmat::PrehashSigner;
-    let signature: p256::ecdsa::Signature = signing_key.sign_prehash(&hash)
-        .expect("failed to sign");
+    let signature: p256::ecdsa::Signature =
+        signing_key.sign_prehash(&hash).expect("failed to sign");
 
     ECHAuthSignature {
         authenticator,

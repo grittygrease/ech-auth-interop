@@ -1,3 +1,41 @@
+//! ECHConfig structure and builder
+//!
+//! This module provides the core ECHConfig structure for representing ECH
+//! configurations, along with a builder for constructing them and functions
+//! for encoding/decoding.
+//!
+//! # Main Types
+//!
+//! - [`ECHConfig`] - The ECH configuration structure
+//! - [`ECHConfigBuilder`] - Builder for creating ECHConfigs
+//! - [`HpkeSymmetricCipherSuite`] - HPKE cipher suite (KDF + AEAD)
+//!
+//! # Constants
+//!
+//! The module provides constants for HPKE algorithms:
+//! - KEMs: [`DHKEM_X25519_SHA256`], [`DHKEM_P256_SHA256`]
+//! - KDFs: [`HKDF_SHA256`], [`HKDF_SHA384`]
+//! - AEADs: [`AES_128_GCM`], [`AES_256_GCM`], [`CHACHA20_POLY1305`]
+//!
+//! # Example
+//!
+//! ```
+//! # use ech_auth::*;
+//! let config = ECHConfigBuilder::new()
+//!     .config_id(1)
+//!     .kem_id(DHKEM_X25519_SHA256)
+//!     .public_key(vec![0u8; 32])
+//!     .add_cipher_suite(HKDF_SHA256, AES_128_GCM)
+//!     .public_name("example.com")
+//!     .build()
+//!     .unwrap();
+//!
+//! // Encode and decode
+//! let bytes = config.encode();
+//! let decoded = ECHConfig::decode(&bytes).unwrap();
+//! assert_eq!(config, decoded);
+//! ```
+
 use crate::{ECHAuth, Error, Result};
 
 /// ECH version for draft-ietf-tls-esni
@@ -16,8 +54,8 @@ pub const AES_128_GCM: u16 = 0x0001;
 pub const AES_256_GCM: u16 = 0x0002;
 pub const CHACHA20_POLY1305: u16 = 0x0003;
 
-/// ECHConfig extension type for ech_auth (use 0xff01 for testing)
-pub const ECH_AUTH_EXTENSION_TYPE: u16 = 0xff01;
+/// ECHConfig extension type for ech_auth (per draft-sullivan-tls-signed-ech-updates)
+pub const ECH_AUTH_EXTENSION_TYPE: u16 = 0xfe0d;
 
 /// HPKE symmetric cipher suite (KDF + AEAD)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,8 +125,7 @@ impl ECHConfig {
 
         // Write length field
         let contents_len = buf.len() - contents_start;
-        buf[length_offset..length_offset + 2]
-            .copy_from_slice(&(contents_len as u16).to_be_bytes());
+        buf[length_offset..length_offset + 2].copy_from_slice(&(contents_len as u16).to_be_bytes());
 
         buf
     }
@@ -129,7 +166,9 @@ impl ECHConfig {
 
         // public_key: opaque<1..2^16-1>
         if data.len() < offset + 2 {
-            return Err(Error::Decode("insufficient data for public_key length".into()));
+            return Err(Error::Decode(
+                "insufficient data for public_key length".into(),
+            ));
         }
         let pk_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;
@@ -163,8 +202,7 @@ impl ECHConfig {
         let mut cipher_suites = Vec::new();
         for i in 0..(suites_len / 4) {
             let kdf_id = u16::from_be_bytes([data[offset + i * 4], data[offset + i * 4 + 1]]);
-            let aead_id =
-                u16::from_be_bytes([data[offset + i * 4 + 2], data[offset + i * 4 + 3]]);
+            let aead_id = u16::from_be_bytes([data[offset + i * 4 + 2], data[offset + i * 4 + 3]]);
             cipher_suites.push(HpkeSymmetricCipherSuite { kdf_id, aead_id });
         }
         offset += suites_len;
@@ -207,6 +245,9 @@ impl ECHConfig {
             return Err(Error::Decode("insufficient data for extensions".into()));
         }
         let extensions = data[offset..offset + ext_len].to_vec();
+
+        // COMPLIANCE: Validate that if ech_auth extension is present, it MUST be last (Section 5.1)
+        validate_extension_ordering(&extensions)?;
 
         Ok(ECHConfig {
             version,
@@ -264,6 +305,129 @@ impl ECHConfig {
 
         config.encode()
     }
+
+    /// Extract ech_auth extension from config extensions
+    ///
+    /// Parses the raw extension bytes to find and decode the ech_auth
+    /// extension (type 0xfe0d).
+    ///
+    /// Returns `None` if no ech_auth extension is present (legacy
+    /// unsigned config).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use ech_auth::*;
+    /// # fn main() -> Result<()> {
+    /// # let bytes = &[0u8; 100];
+    /// let config = ECHConfig::decode(bytes)?;
+    ///
+    /// if let Some(auth) = config.extract_ech_auth()? {
+    ///     // Config has authentication
+    ///     println!("Method: {:?}", auth.method);
+    ///     if let Some(sig) = &auth.signature {
+    ///         println!("Expires: {}", sig.not_after);
+    ///     }
+    /// } else {
+    ///     // Legacy unsigned config
+    ///     println!("No authentication present");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the extension data is malformed or cannot
+    /// be parsed as a valid ECHAuth structure.
+    pub fn extract_ech_auth(&self) -> Result<Option<ECHAuth>> {
+        // Parse TLV extensions
+        let mut offset = 0;
+        let ext_data = &self.extensions;
+
+        while offset + 4 <= ext_data.len() {
+            if ext_data.len() < offset + 2 {
+                return Err(Error::Decode(
+                    "malformed extension: insufficient data for type".into(),
+                ));
+            }
+            let ext_type = u16::from_be_bytes([ext_data[offset], ext_data[offset + 1]]);
+            offset += 2;
+
+            if ext_data.len() < offset + 2 {
+                return Err(Error::Decode(
+                    "malformed extension: insufficient data for length".into(),
+                ));
+            }
+            let ext_len = u16::from_be_bytes([ext_data[offset], ext_data[offset + 1]]) as usize;
+            offset += 2;
+
+            if ext_data.len() < offset + ext_len {
+                return Err(Error::Decode(
+                    "malformed extension: insufficient data for content".into(),
+                ));
+            }
+
+            if ext_type == ECH_AUTH_EXTENSION_TYPE {
+                let auth = ECHAuth::decode(&ext_data[offset..offset + ext_len])?;
+                return Ok(Some(auth));
+            }
+
+            offset += ext_len;
+        }
+
+        Ok(None)
+    }
+}
+
+/// Validate that ech_auth extension, if present, is the last extension
+/// COMPLIANCE: Section 5.1 MUST requirement
+fn validate_extension_ordering(extensions: &[u8]) -> Result<()> {
+    if extensions.is_empty() {
+        return Ok(());
+    }
+
+    let mut offset = 0;
+    let mut found_ech_auth = false;
+
+    while offset < extensions.len() {
+        if extensions.len() < offset + 2 {
+            return Err(Error::Decode(
+                "malformed extension: insufficient data for type".into(),
+            ));
+        }
+        let ext_type = u16::from_be_bytes([extensions[offset], extensions[offset + 1]]);
+        offset += 2;
+
+        if extensions.len() < offset + 2 {
+            return Err(Error::Decode(
+                "malformed extension: insufficient data for length".into(),
+            ));
+        }
+        let ext_len = u16::from_be_bytes([extensions[offset], extensions[offset + 1]]) as usize;
+        offset += 2;
+
+        if extensions.len() < offset + ext_len {
+            return Err(Error::Decode(
+                "malformed extension: insufficient data for content".into(),
+            ));
+        }
+
+        // Check if ech_auth was already seen (it should be last)
+        if found_ech_auth {
+            return Err(Error::Decode(
+                "ech_auth extension MUST be last (found extension after ech_auth)".into(),
+            ));
+        }
+
+        if ext_type == ECH_AUTH_EXTENSION_TYPE {
+            found_ech_auth = true;
+        }
+
+        offset += ext_len;
+    }
+
+    Ok(())
 }
 
 /// Builder for ECHConfig
@@ -326,7 +490,9 @@ impl ECHConfigBuilder {
             return Err(Error::Decode("public_key is required".into()));
         }
         if self.cipher_suites.is_empty() {
-            return Err(Error::Decode("at least one cipher_suite is required".into()));
+            return Err(Error::Decode(
+                "at least one cipher_suite is required".into(),
+            ));
         }
         if self.public_name.is_empty() {
             return Err(Error::Decode("public_name is required".into()));
@@ -409,14 +575,19 @@ mod tests {
         let result = ECHConfigBuilder::new().public_name("test.example").build();
         assert!(result.is_err());
 
-        let result = ECHConfigBuilder::new()
-            .public_key(vec![0u8; 32])
-            .build();
+        let result = ECHConfigBuilder::new().public_key(vec![0u8; 32]).build();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_ech_config_with_extensions() {
+        // Create valid extension: type=0x0001, length=0x0002, data=[0xAA, 0xBB]
+        let valid_extension = vec![
+            0x00, 0x01, // extension type
+            0x00, 0x02, // extension length
+            0xAA, 0xBB, // extension data
+        ];
+
         let config = ECHConfig {
             version: ECH_VERSION,
             config_id: 1,
@@ -428,13 +599,123 @@ mod tests {
             }],
             maximum_name_length: 64,
             public_name: "test.com".to_string(),
-            extensions: vec![1, 2, 3, 4],
+            extensions: valid_extension.clone(),
         };
 
         let encoded = config.encode();
         let decoded = ECHConfig::decode(&encoded).unwrap();
 
         assert_eq!(config, decoded);
-        assert_eq!(decoded.extensions, vec![1, 2, 3, 4]);
+        assert_eq!(decoded.extensions, valid_extension);
+    }
+
+    #[test]
+    fn test_extension_ordering_ech_auth_must_be_last() {
+        // Create config with ech_auth extension followed by another extension (invalid)
+        let invalid_extensions = vec![
+            0xfe, 0x0d, // ech_auth extension type
+            0x00, 0x01, // length
+            0x00, // data (method=RPK)
+            0x00, 0x01, // another extension type
+            0x00, 0x02, // length
+            0xAA, 0xBB, // data
+        ];
+
+        let config = ECHConfig {
+            version: ECH_VERSION,
+            config_id: 1,
+            kem_id: DHKEM_X25519_SHA256,
+            public_key: vec![2u8; 32],
+            cipher_suites: vec![HpkeSymmetricCipherSuite {
+                kdf_id: HKDF_SHA256,
+                aead_id: AES_128_GCM,
+            }],
+            maximum_name_length: 64,
+            public_name: "test.com".to_string(),
+            extensions: invalid_extensions,
+        };
+
+        let encoded = config.encode();
+        let result = ECHConfig::decode(&encoded);
+
+        // Should fail because ech_auth is not last
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("ech_auth extension MUST be last"));
+    }
+
+    #[test]
+    fn test_extension_ordering_ech_auth_last_is_valid() {
+        // Create config with another extension followed by ech_auth (valid)
+        let valid_extensions = vec![
+            0x00, 0x01, // another extension type
+            0x00, 0x02, // length
+            0xAA, 0xBB, // data
+            0xfe, 0x0d, // ech_auth extension type (last)
+            0x00, 0x01, // length
+            0x00, // data (method=RPK)
+        ];
+
+        let config = ECHConfig {
+            version: ECH_VERSION,
+            config_id: 1,
+            kem_id: DHKEM_X25519_SHA256,
+            public_key: vec![2u8; 32],
+            cipher_suites: vec![HpkeSymmetricCipherSuite {
+                kdf_id: HKDF_SHA256,
+                aead_id: AES_128_GCM,
+            }],
+            maximum_name_length: 64,
+            public_name: "test.com".to_string(),
+            extensions: valid_extensions.clone(),
+        };
+
+        let encoded = config.encode();
+        let decoded = ECHConfig::decode(&encoded).unwrap();
+
+        // Should succeed because ech_auth is last
+        assert_eq!(decoded.extensions, valid_extensions);
+    }
+
+    #[test]
+    fn test_extract_ech_auth_present() {
+        let config = ECHConfigBuilder::new()
+            .config_id(1)
+            .kem_id(DHKEM_X25519_SHA256)
+            .public_key(vec![0u8; 32])
+            .add_cipher_suite(HKDF_SHA256, AES_128_GCM)
+            .public_name("example.com")
+            .build()
+            .unwrap();
+
+        // Add ech_auth extension manually
+        let auth = crate::ECHAuth {
+            method: crate::ECHAuthMethod::Rpk,
+            trusted_keys: vec![],
+            signature: None,
+        };
+        let signed = config.with_ech_auth(&auth);
+        let decoded = ECHConfig::decode(&signed).unwrap();
+
+        // Extract should find the auth
+        let extracted = decoded.extract_ech_auth().unwrap();
+        assert!(extracted.is_some());
+        assert_eq!(extracted.unwrap().method, crate::ECHAuthMethod::Rpk);
+    }
+
+    #[test]
+    fn test_extract_ech_auth_absent() {
+        let config = ECHConfigBuilder::new()
+            .config_id(1)
+            .kem_id(DHKEM_X25519_SHA256)
+            .public_key(vec![0u8; 32])
+            .add_cipher_suite(HKDF_SHA256, AES_128_GCM)
+            .public_name("example.com")
+            .build()
+            .unwrap();
+
+        // Config without ech_auth
+        let extracted = config.extract_ech_auth().unwrap();
+        assert!(extracted.is_none());
     }
 }

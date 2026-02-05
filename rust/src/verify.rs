@@ -1,14 +1,16 @@
 use crate::sign::{ECDSA_P256_SPKI_PREFIX, ED25519_SPKI_PREFIX};
-use crate::{ECHAuth, ECHAuthMethod, Error, Result, SpecVersion, DEFAULT_SPEC_VERSION, ECDSA_SECP256R1_SHA256, ED25519_SIGNATURE_SCHEME};
+use crate::{
+    DEFAULT_SPEC_VERSION, ECDSA_SECP256R1_SHA256, ECHAuth, ECHAuthMethod, ED25519_SIGNATURE_SCHEME,
+    Error, Result, SpecVersion,
+};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use p256::ecdsa::{Signature as EcdsaSignature, VerifyingKey as EcdsaVerifyingKey};
 use sha2::{Digest, Sha256};
-use x509_cert::{Certificate, der::Decode};
 use webpki::{
-    anchor_from_trusted_cert,
+    ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage, anchor_from_trusted_cert,
     types::{CertificateDer, UnixTime},
-    EndEntityCert, KeyUsage, ALL_VERIFICATION_ALGS,
 };
+use x509_cert::{Certificate, der::Decode};
 
 /// Context label for ECH authentication signatures
 const CONTEXT_LABEL: &[u8] = b"TLS-ECH-AUTH-v1";
@@ -87,21 +89,14 @@ fn extract_ecdsa_p256_public_key(spki: &[u8]) -> Result<[u8; 65]> {
 /// 5. Compute SHA-256(SPKI) and verify it's in trusted_keys
 /// 6. Check current_time < not_after
 /// 7. Verify Ed25519 signature over (CONTEXT_LABEL || ech_config_tbs)
-pub fn verify_rpk(
-    ech_config_tbs: &[u8],
-    ech_auth: &ECHAuth,
-    current_time: u64,
-) -> Result<()> {
+pub fn verify_rpk(ech_config_tbs: &[u8], ech_auth: &ECHAuth, current_time: u64) -> Result<()> {
     // Step 1: Check method
     if ech_auth.method != ECHAuthMethod::Rpk {
         return Err(Error::UnsupportedMethod(ech_auth.method.to_u8()));
     }
 
     // Step 2: Extract signature block
-    let sig = ech_auth
-        .signature
-        .as_ref()
-        .ok_or(Error::SignatureMissing)?;
+    let sig = ech_auth.signature.as_ref().ok_or(Error::SignatureMissing)?;
 
     // Step 3: Verify algorithm early (before revealing trust status)
     if sig.algorithm != ED25519_SIGNATURE_SCHEME && sig.algorithm != ECDSA_SECP256R1_SHA256 {
@@ -158,7 +153,8 @@ pub fn verify_rpk(
         let public_key_bytes = extract_ed25519_public_key(&sig.authenticator)?;
         let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|_| Error::InvalidSpki("invalid Ed25519 public key".into()))?;
-        let signature = Signature::from_slice(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
+        let signature =
+            Signature::from_slice(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
 
         verifying_key
             .verify(&to_be_signed, &signature)
@@ -172,8 +168,8 @@ pub fn verify_rpk(
         let public_key_bytes = extract_ecdsa_p256_public_key(&sig.authenticator)?;
         let verifying_key = EcdsaVerifyingKey::from_sec1_bytes(&public_key_bytes)
             .map_err(|_| Error::InvalidSpki("invalid ECDSA P-256 public key".into()))?;
-        let signature = EcdsaSignature::from_der(&sig.signature)
-            .map_err(|_| Error::SignatureInvalid)?;
+        let signature =
+            EcdsaSignature::from_der(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
 
         // Verify the signature against the hash
         use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -218,10 +214,7 @@ pub fn verify_pkix_versioned(
     }
 
     // Step 2: Extract signature block
-    let sig = ech_auth
-        .signature
-        .as_ref()
-        .ok_or(Error::SignatureMissing)?;
+    let sig = ech_auth.signature.as_ref().ok_or(Error::SignatureMissing)?;
 
     // Step 2.5: Check expiration based on version
     // - Published: not_after must be 0 (skip validation)
@@ -244,12 +237,15 @@ pub fn verify_pkix_versioned(
     // Parse certificate chain from authenticator
     let certificates = parse_certificate_chain(&sig.authenticator)?;
     if certificates.is_empty() {
-        return Err(Error::ChainValidationFailed("empty certificate chain".into()));
+        return Err(Error::ChainValidationFailed(
+            "empty certificate chain".into(),
+        ));
     }
 
     let leaf_cert_der = &certificates[0];
-    let leaf_cert = Certificate::from_der(leaf_cert_der)
-        .map_err(|e| Error::CertificateInvalid(format!("failed to parse leaf certificate: {}", e)))?;
+    let leaf_cert = Certificate::from_der(leaf_cert_der).map_err(|e| {
+        Error::CertificateInvalid(format!("failed to parse leaf certificate: {}", e))
+    })?;
 
     // Step 3: Check for critical id-pe-echConfigSigning extension
     // OID 1.3.6.1.5.5.7.1.99 (using 99 for testing instead of TBD2)
@@ -305,14 +301,17 @@ pub fn verify_pkix_versioned(
         // Extract raw public key bytes (skip BIT STRING header)
         let public_key_bytes = public_key_info.subject_public_key.raw_bytes();
         if public_key_bytes.len() != 32 {
-            return Err(Error::InvalidSpki("invalid Ed25519 public key length".into()));
+            return Err(Error::InvalidSpki(
+                "invalid Ed25519 public key length".into(),
+            ));
         }
 
         let mut pk_array = [0u8; 32];
         pk_array.copy_from_slice(public_key_bytes);
         let verifying_key = VerifyingKey::from_bytes(&pk_array)
             .map_err(|_| Error::InvalidSpki("invalid Ed25519 public key".into()))?;
-        let signature = Signature::from_slice(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
+        let signature =
+            Signature::from_slice(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
 
         verifying_key
             .verify(&to_be_signed, &signature)
@@ -335,8 +334,8 @@ pub fn verify_pkix_versioned(
         let public_key_bytes = public_key_info.subject_public_key.raw_bytes();
         let verifying_key = EcdsaVerifyingKey::from_sec1_bytes(public_key_bytes)
             .map_err(|_| Error::InvalidSpki("invalid ECDSA P-256 public key".into()))?;
-        let signature = EcdsaSignature::from_der(&sig.signature)
-            .map_err(|_| Error::SignatureInvalid)?;
+        let signature =
+            EcdsaSignature::from_der(&sig.signature).map_err(|_| Error::SignatureInvalid)?;
 
         // Verify the signature against the hash
         use p256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -358,7 +357,14 @@ pub fn verify_pkix(
     trust_anchors: &[Vec<u8>],
     current_time: u64,
 ) -> Result<()> {
-    verify_pkix_versioned(ech_config_tbs, ech_auth, public_name, trust_anchors, current_time, DEFAULT_SPEC_VERSION)
+    verify_pkix_versioned(
+        ech_config_tbs,
+        ech_auth,
+        public_name,
+        trust_anchors,
+        current_time,
+        DEFAULT_SPEC_VERSION,
+    )
 }
 
 /// Parse certificate chain from TLS-style encoding (24-bit length prefix per cert)
@@ -368,7 +374,9 @@ fn parse_certificate_chain(data: &[u8]) -> Result<Vec<Vec<u8>>> {
 
     while offset < data.len() {
         if data.len() < offset + 3 {
-            return Err(Error::Decode("insufficient data for certificate length".into()));
+            return Err(Error::Decode(
+                "insufficient data for certificate length".into(),
+            ));
         }
 
         // 24-bit length (3 bytes, big-endian)
@@ -415,10 +423,14 @@ fn verify_certificate_chain(
     current_time: u64,
 ) -> Result<()> {
     if certificates.is_empty() {
-        return Err(Error::ChainValidationFailed("empty certificate chain".into()));
+        return Err(Error::ChainValidationFailed(
+            "empty certificate chain".into(),
+        ));
     }
     if trust_anchors.is_empty() {
-        return Err(Error::ChainValidationFailed("no trust anchors provided".into()));
+        return Err(Error::ChainValidationFailed(
+            "no trust anchors provided".into(),
+        ));
     }
 
     // Parse trust anchors from DER-encoded certificates
@@ -464,10 +476,10 @@ fn verify_certificate_chain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sign::{encode_ed25519_spki, encode_ecdsa_p256_spki, sign_rpk, sign_rpk_ecdsa};
     use crate::SPKIHash;
+    use crate::sign::{encode_ecdsa_p256_spki, encode_ed25519_spki, sign_rpk, sign_rpk_ecdsa};
     use ed25519_dalek::SigningKey;
-    use p256::{ecdsa::SigningKey as EcdsaSigningKey, SecretKey};
+    use p256::{SecretKey, ecdsa::SigningKey as EcdsaSigningKey};
     use sha2::{Digest, Sha256};
 
     #[test]
@@ -494,10 +506,12 @@ mod tests {
         // Different OID in bytes 4-8
         let result = extract_ed25519_public_key(&spki);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("does not match Ed25519"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not match Ed25519")
+        );
     }
 
     #[test]

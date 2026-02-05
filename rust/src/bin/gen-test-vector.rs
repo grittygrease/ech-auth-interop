@@ -1,7 +1,7 @@
 //! Generate test vectors for cross-implementation testing
 
 use ech_auth::{
-    sign_rpk, ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ED25519_SIGNATURE_SCHEME,
+    ECHAuth, ECHAuthInfo, ECHAuthMethod, ECHAuthRetry, ED25519_SIGNATURE_SCHEME, sign_rpk,
 };
 use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
@@ -9,10 +9,9 @@ use sha2::{Digest, Sha256};
 fn main() {
     // Use deterministic key for reproducibility
     let key_bytes: [u8; 32] = [
-        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
-        0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
-        0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
-        0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c,
+        0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
+        0x7f, 0x60,
     ];
     let signing_key = SigningKey::from_bytes(&key_bytes);
 
@@ -59,11 +58,11 @@ fn main() {
     // Output as JSON
     let json = serde_json::json!({
         "name": "interop_ed25519_rpk",
-        "signing_key_hex": hex::encode(&key_bytes),
+        "signing_key_hex": hex::encode(key_bytes),
         "ech_config_tbs_hex": hex::encode(ech_config_tbs),
         "not_after": not_after,
         "spki_hex": hex::encode(&sig.authenticator),
-        "spki_hash_hex": hex::encode(&spki_hash),
+        "spki_hash_hex": hex::encode(spki_hash),
         "signature_hex": hex::encode(&sig.signature),
         "algorithm": ED25519_SIGNATURE_SCHEME,
         // Combined format (legacy)
@@ -77,8 +76,8 @@ fn main() {
 
     // Also write to stderr for verification
     eprintln!("Generated test vector:");
-    eprintln!("  Key: {}", hex::encode(&key_bytes));
-    eprintln!("  SPKI hash: {}", hex::encode(&spki_hash));
+    eprintln!("  Key: {}", hex::encode(key_bytes));
+    eprintln!("  SPKI hash: {}", hex::encode(spki_hash));
     eprintln!("  Signature: {} bytes", sig.signature.len());
     eprintln!("  Combined: {} bytes", combined_encoded.len());
     eprintln!("  AuthInfo: {} bytes", info_encoded.len());

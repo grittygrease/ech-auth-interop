@@ -210,12 +210,124 @@ func (c *ECHConfig) GetAuthExtension() (*Auth, error) {
 	return nil, ErrNoAuthExtension
 }
 
+// Clone creates a deep copy of the ECHConfig
+func (c *ECHConfig) Clone() ECHConfig {
+	out := *c
+	if c.PublicKey != nil {
+		out.PublicKey = append([]byte(nil), c.PublicKey...)
+	}
+	if c.Ciphers != nil {
+		out.Ciphers = append([]CipherSuite(nil), c.Ciphers...)
+	}
+	if c.PublicName != nil {
+		out.PublicName = append([]byte(nil), c.PublicName...)
+	}
+	if c.Extensions != nil {
+		out.Extensions = make([]Extension, len(c.Extensions))
+		for i, ext := range c.Extensions {
+			out.Extensions[i] = Extension{
+				Type: ext.Type,
+				Data: append([]byte(nil), ext.Data...),
+			}
+		}
+	}
+	out.Raw = nil // Invalidated by mutation
+	return out
+}
+
+// Encode serializes ECHConfig to bytes
+func (c *ECHConfig) Encode() []byte {
+	w := NewWriter()
+	w.PutUint16(c.Version)
+
+	// Placeholder for length (filled later)
+	lenOffset := len(w.Bytes())
+	w.PutUint16(0)
+
+	startOffset := len(w.Bytes())
+
+	w.PutUint8(c.ConfigID)
+	w.PutUint16(c.KemID)
+	w.PutVector16(c.PublicKey)
+
+	// Cipher Suites
+	w.PutUint16(uint16(len(c.Ciphers) * 4))
+	for _, cs := range c.Ciphers {
+		w.PutUint16(cs.KdfID)
+		w.PutUint16(cs.AeadID)
+	}
+
+	w.PutUint8(c.MaxNameLen)
+	w.PutVector8(c.PublicName)
+
+	// Extensions
+	extW := NewWriter()
+	for _, ext := range c.Extensions {
+		extW.PutUint16(ext.Type)
+		extW.PutVector16(ext.Data)
+	}
+	w.PutVector16(extW.Bytes())
+
+	// Patch in length
+	totalLen := len(w.Bytes()) - startOffset
+	binary.BigEndian.PutUint16(w.Bytes()[lenOffset:], uint16(totalLen))
+
+	return w.Bytes()
+}
+
 // ComputeTBS computes the to-be-signed bytes for an ECHConfig.
-// This is the ECHConfig with the signature field of ech_auth zeroed.
+// This is done by creating a clone, zeroing the signature in the auth extension, and re-encoding.
 func (c *ECHConfig) ComputeTBS() ([]byte, error) {
-	// For now, return the raw config bytes
-	// In a full implementation, we'd need to re-encode with zeroed signature
-	return c.Raw, nil
+	clone := c.Clone()
+
+	// Find the auth extension
+	var authExt *Extension
+	for i := range clone.Extensions {
+		if clone.Extensions[i].Type == ECHAuthExtensionType {
+			authExt = &clone.Extensions[i]
+			break
+		}
+	}
+
+	if authExt == nil {
+		return nil, ErrNoAuthExtension
+	}
+
+	// Detect version to handle PR2 vs Legacy correctly
+	ver, ok := DetectVersion(authExt.Data)
+	if !ok {
+		ver = DefaultSpecVersion
+	}
+
+	// Try interpreting as AuthRetry (contains signature) - mainly for PR2
+	if ver == SpecPR2 {
+		retry, err := DecodeAuthRetryVersioned(authExt.Data, ver)
+		if err == nil {
+			// Zero the signature
+			retry.Signature = make([]byte, len(retry.Signature))
+			for i := range retry.Signature {
+				retry.Signature[i] = 0
+			}
+			// Write back
+			authExt.Data = retry.EncodeVersioned(ver)
+			return clone.Encode(), nil
+		}
+	}
+
+	// Fallback/Legacy logic (Combined Auth)
+	// Or if DecodeAuthRetry failed (though it shouldn't for PR2)
+	auth, err := DecodeVersioned(authExt.Data, ver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode auth extension for zeroing: %w", err)
+	}
+	if auth.Signature != nil {
+		// Zero signature bytes
+		zeroSig := make([]byte, len(auth.Signature.SignatureData))
+		auth.Signature.SignatureData = zeroSig
+		authExt.Data = auth.EncodeVersioned(ver)
+	}
+
+	return clone.Encode(), nil
 }
 
 // TrustAnchor holds pinned trust information for verification

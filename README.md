@@ -1,8 +1,29 @@
 # ECH Auth Interop
 
+[![CI](https://github.com/grittygrease/ech-auth-interop/workflows/CI/badge.svg)](https://github.com/grittygrease/ech-auth-interop/actions)
+
 Reference implementations of [draft-sullivan-tls-signed-ech-updates](https://datatracker.ietf.org/doc/draft-sullivan-tls-signed-ech-updates/) in Rust, Go, and NSS (C).
 
 This draft defines authenticated ECH configuration distribution, allowing TLS clients to verify that ECH retry configs received during handshake rejection come from the legitimate server operator.
+
+## Quick Start
+
+**New to the project?** Start here:
+
+1. **Read the overview**: [What is ECH Auth?](#authentication-methods)
+2. **Choose your language**:
+   - **Rust**: See [`rust/README.md`](rust/README.md) for installation and examples
+   - **Go**: Check [Usage](#go) below for quick start
+   - **NSS (C)**: See [`nss/README.md`](nss/README.md) for patch application
+3. **Integration guide**: See [`INTEGRATION.md`](INTEGRATION.md) for TLS stack integration patterns
+
+### For Implementers
+
+If you're implementing ECH Auth in your TLS stack:
+1. Read the [wire format](#wire-format) section
+2. Review the [Rust examples](rust/examples/) for reference implementations
+3. Check the [interop matrix](#interop-matrix) for compatibility
+4. Run the [cross-implementation tests](#cross-implementation-interop)
 
 ## Interop Matrix
 
@@ -14,7 +35,8 @@ All implementations interoperate for signing and verification:
 |---------------|:----:|:---:|:---:|
 | **Rust**      |  ✓   |  ✓  |  ✓  |
 | **Go**        |  ✓   |  ✓  |  ✓  |
-| **NSS**       |  ✓   |  ✓  |  ✓  |
+
+NSS is client-focused and doesn't implement signing (servers use Go/Rust).
 
 Algorithms tested:
 - Ed25519 (recommended)
@@ -24,16 +46,34 @@ Algorithms tested:
 
 | Sign \ Verify | Rust | Go  | NSS |
 |---------------|:----:|:---:|:---:|
-| **Rust**      |  ✓   |  ✓  |  -  |
-| **Go**        |  ✓   |  ✓  |  -  |
-| **NSS**       |  -   |  -  |  -  |
+| **Rust**      |  ✓   |  ✓  |  ✓  |
+| **Go**        |  ✓   |  ✓  |  ✓  |
 
-NSS PKIX support not yet implemented.
+NSS is client-focused and doesn't implement signing (servers use Go/Rust).
 
-Tested with:
-- Real TLS 1.3 ECH handshakes with rejection/retry
-- WebPKI certificate chain validation
-- Critical `id-pe-echConfigSigning` extension check
+**NSS Implementation Status**: 
+- **Client Verification**: ✅ Fully working - NSS clients can verify configs signed by Go/Rust servers ([Docker test evidence](https://github.com/grittygrease/ech-auth-interop/actions))
+- **Server Signing**: Not implemented (NSS is client-focused; servers typically use Go/Rust)
+- **Features**: Complete PKIX and RPK support including:
+  - Certificate chain parsing and validation
+  - Critical `id-pe-echConfigSigning` extension check
+  - SAN matching against public_name
+  - PKIX `not_after=0` compliance enforcement
+
+**Testing NSS Interop:**
+```bash
+# Requires Docker
+cd nss
+./test-interop-docker.sh
+```
+
+Docker tests validate NSS parsing of:
+- `test-vectors/go_signed_rpk.ech` (Go RPK → NSS)
+- `test-vectors/go_signed_pkix.ech` (Go PKIX → NSS)
+- `test-vectors/rust_signed_rpk.ech` (Rust RPK → NSS)
+- `test-vectors/rust_signed_pkix.ech` (Rust PKIX → NSS)
+
+See [`nss/DOCKER_TESTING.md`](nss/DOCKER_TESTING.md) for Docker setup and [`nss/README.md`](nss/README.md) for implementation details.
 
 ## Authentication Methods
 
@@ -55,26 +95,33 @@ Uses X.509 certificate chains with WebPKI validation. Requires certificates with
 .
 ├── rust/           # Rust implementation (ech-auth crate)
 │   ├── src/
-│   │   ├── lib.rs
-│   │   ├── codec.rs      # Wire format encoding/decoding
-│   │   ├── types.rs      # Auth struct and methods
+│   │   ├── lib.rs        # Main library with comprehensive docs
+│   │   ├── trust.rs      # Trust model (DNS, caching, downgrade protection)
+│   │   ├── verify.rs     # Signature verification (RPK & PKIX)
 │   │   ├── sign.rs       # Signing operations
-│   │   ├── verify.rs     # Verification with webpki
+│   │   ├── types.rs      # Wire format types
 │   │   ├── ech_config.rs # ECHConfig parsing
-│   │   └── bin/          # CLI tools
+│   │   ├── codec.rs      # Encoding/decoding utilities
+│   │   ├── error.rs      # Error types
+│   │   └── bin/          # CLI tools (ech-sign, ech-verify, gen-test-vector)
+│   ├── examples/         # Working examples (5 files)
+│   ├── README.md         # Rust-specific documentation
 │   └── Cargo.toml
 ├── go/             # Go implementation (echauth package)
-│   ├── echauth.go        # Core types and RPK
-│   ├── pkix.go           # PKIX signing
-│   ├── config.go         # ECHConfig parsing and verification
-│   ├── *_test.go         # Tests including E2E TLS
+│   ├── echauth.go        # Core types and verification
+│   ├── trust.go          # Trust model implementation
+│   ├── pkix.go           # PKIX certificate validation
+│   ├── config.go         # ECHConfig parsing
+│   ├── encoding.go       # Wire format utilities
+│   ├── *_test.go         # Comprehensive test suite
 │   └── go.mod
-└── nss/            # NSS implementation (C patch)
-    ├── tls13echauth.h    # Public API
-    ├── tls13echauth.c    # Implementation
-    ├── echauth_client.c  # Test client
-    ├── nss_echauth.patch # Integration patch
-    └── README.md
+├── nss/            # NSS implementation (C patch)
+│   ├── tls13echauth.h    # Public API
+│   ├── tls13echauth.c    # Implementation (RPK & PKIX)
+│   ├── echauth_client.c  # Test client
+│   ├── nss_echauth.patch # Integration patch
+│   └── README.md
+└── INTEGRATION.md  # Guide for integrating with TLS stacks
 ```
 
 ## Usage
@@ -129,6 +176,24 @@ SSL_SetEchAuthTrustAnchors(fd, &spkiHash, 1);
 ```
 
 See `nss/README.md` for build instructions and patch application.
+
+## Quality Checks
+
+To ensure code quality, run the following before submitting changes:
+
+### Rust
+```bash
+cd rust
+cargo clippy
+cargo fmt --check
+```
+
+### Go
+```bash
+cd go
+go vet ./...
+go fmt ./...
+```
 
 ## Testing
 

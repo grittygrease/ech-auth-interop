@@ -396,3 +396,45 @@ func TestCheckECHSigningExtension(t *testing.T) {
 		t.Errorf("expected ErrExtNotCritical, got: %v", err)
 	}
 }
+
+func TestAttacker_ValidCert_WrongSNI(t *testing.T) {
+	// Scenario: Attacker has a valid certificate for "attacker.com" signed by a trusted CA.
+	// They try to present this certificate to a client connecting to "target.com".
+	// If verification succeeds, the client would encrypt SNI "target.com" using "attacker.com" key.
+	// This test ensures verification FAILS.
+
+	// 1. Setup Trusted CA
+	_, caKey, _ := ed25519.GenerateKey(rand.Reader)
+	notBefore := time.Now().Add(-1 * time.Hour)
+	notAfter := time.Now().Add(24 * time.Hour)
+	caCert := createTestCert(t, caKey, "Trusted CA", notBefore, notAfter, true, false, false, nil, nil)
+	anchor, _ := NewPKIXTrustAnchor([][]byte{caCert.Raw})
+
+	// 2. Attacker gets valid cert for "attacker.com"
+	// Note: They even include the ECH extension to look legitimate
+	_, attackerKey, _ := ed25519.GenerateKey(rand.Reader)
+	attackerCert := createTestCert(t, attackerKey, "attacker.com", notBefore, notAfter, false, true, true, caCert, caKey)
+
+	// 3. Attacker signs an ECH config
+	// They might try to claim it's for "target.com" in the ECH Config itself (outer SNI vs inner)
+	// But VerifyPKIX checks if the cert (attacker.com) matches the 'publicName' (target.com)
+	echConfigTBS := []byte("malicious config claiming to be target.com")
+	sig := SignPKIX(echConfigTBS, attackerKey, [][]byte{attackerCert.Raw}, notAfter)
+
+	auth := &Auth{
+		Method:    MethodPKIX,
+		Signature: sig,
+	}
+
+	// 4. Client verifies against "target.com"
+	err := VerifyPKIX(echConfigTBS, auth, "target.com", anchor, time.Now())
+
+	// 5. Expect Failure
+	if err == nil {
+		t.Fatal("Security Fail: Attacker's cert for 'attacker.com' was accepted for 'target.com'!")
+	}
+	if err != ErrChainValidation && err != ErrSANMismatch {
+		// x509.Verify returns hostname mismatch error wrapped
+		t.Logf("Correctly rejected with error: %v", err)
+	}
+}

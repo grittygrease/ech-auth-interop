@@ -1,10 +1,21 @@
 # Rust
 /rust/target/
 **/*.rs.bk
+**/*.profraw
 
 # Go
 /go/bin/
 /go/*.test
+/go/coverage.out
+/go/ech-auth
+/go/*.der
+/go/*.ech
+/go/*.pem
+
+# Test vectors (generated)
+/test-vectors/*.ech
+/test-vectors/*.der
+/test-vectors/*.hex
 
 # IDE
 .idea/

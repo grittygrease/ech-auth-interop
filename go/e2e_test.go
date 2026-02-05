@@ -119,8 +119,8 @@ func TestE2E_ECHHandshake(t *testing.T) {
 		}},
 		MinVersion: tls.VersionTLS13,
 		EncryptedClientHelloKeys: []tls.EncryptedClientHelloKey{{
-			Config:     echConfig,
-			PrivateKey: echPrivKey.Bytes(),
+			Config:      echConfig,
+			PrivateKey:  echPrivKey.Bytes(),
 			SendAsRetry: false,
 		}},
 	}
@@ -166,10 +166,10 @@ func TestE2E_ECHHandshake(t *testing.T) {
 
 	// Client TLS config with ECH
 	clientTLSConfig := &tls.Config{
-		ServerName:                       "server.example.com",
-		InsecureSkipVerify:               true,
-		MinVersion:                       tls.VersionTLS13,
-		EncryptedClientHelloConfigList:   echConfigList,
+		ServerName:                     "server.example.com",
+		InsecureSkipVerify:             true,
+		MinVersion:                     tls.VersionTLS13,
+		EncryptedClientHelloConfigList: echConfigList,
 	}
 
 	// Connect
@@ -275,10 +275,10 @@ func TestE2E_ECHRejectionWithRetry(t *testing.T) {
 	// Client has OLD config - should get rejection
 	oldConfigList := buildECHConfigListFromConfig(oldConfig)
 	clientTLSConfig := &tls.Config{
-		ServerName:                       "server.example.com",
-		InsecureSkipVerify:               true,
-		MinVersion:                       tls.VersionTLS13,
-		EncryptedClientHelloConfigList:   oldConfigList,
+		ServerName:                     "server.example.com",
+		InsecureSkipVerify:             true,
+		MinVersion:                     tls.VersionTLS13,
+		EncryptedClientHelloConfigList: oldConfigList,
 	}
 
 	// Set up rejection verification callback
@@ -473,10 +473,10 @@ func TestE2E_DumpHandshake(t *testing.T) {
 	clientCapture := &connCapture{Conn: rawConn}
 
 	clientTLSConfig := &tls.Config{
-		ServerName:                       "server.example.com",
-		InsecureSkipVerify:               true,
-		MinVersion:                       tls.VersionTLS13,
-		EncryptedClientHelloConfigList:   echConfigList,
+		ServerName:                     "server.example.com",
+		InsecureSkipVerify:             true,
+		MinVersion:                     tls.VersionTLS13,
+		EncryptedClientHelloConfigList: echConfigList,
 	}
 
 	tlsConn := tls.Client(clientCapture, clientTLSConfig)
@@ -682,10 +682,10 @@ func TestE2E_CaptureHandshake(t *testing.T) {
 
 	// Client connection
 	clientTLSConfig := &tls.Config{
-		ServerName:                       "server.example.com",
-		InsecureSkipVerify:               true,
-		MinVersion:                       tls.VersionTLS13,
-		EncryptedClientHelloConfigList:   echConfigList,
+		ServerName:                     "server.example.com",
+		InsecureSkipVerify:             true,
+		MinVersion:                     tls.VersionTLS13,
+		EncryptedClientHelloConfigList: echConfigList,
 	}
 
 	conn, err := tls.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), clientTLSConfig)
