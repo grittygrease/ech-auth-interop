@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  rust:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Check formatting
+        run: cd rust && cargo fmt --check
+      
+      - name: Clippy
+        run: cd rust && cargo clippy -- -D warnings
+      
+      - name: Build
+        run: cd rust && cargo build --verbose
+      
+      - name: Run tests
+        run: cd rust && cargo test --verbose
+      
+      - name: Build examples
+        run: cd rust && cargo build --examples
+
+  go:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: go/go.sum
+      
+      - name: Check formatting
+        run: |
+          cd go
+          gofmt -d . | tee /tmp/gofmt.out
+          if [ -s /tmp/gofmt.out ]; then
+            echo "Code is not formatted. Run 'go fmt ./...'"
+            exit 1
+          fi
+      
+      - name: Vet
+        run: cd go && go vet ./...
+      
+      - name: Build
+        run: cd go && go build ./...
+      
+      - name: Run tests
+        run: cd go && go test -v ./...
+      
+      - name: Run tests with race detector
+        run: cd go && go test -race -v ./...
+
+  nss:
+    name: NSS Patch Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install NSS dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mercurial ninja-build gyp zlib1g-dev libnspr4-dev pkg-config
+      
+      - name: Clone NSS
+        run: |
+          rm -rf nss-work
+          mkdir -p nss-work/dist
+          cd nss-work
+          hg clone https://hg.mozilla.org/projects/nss nss-repo
+          cd nss-repo
+          hg update NSS_3_120_RTM || hg update default
+      
+      - name: Check patch applies cleanly
+        run: |
+          cd nss-work/nss-repo
+          patch --dry-run -p1 < ../../nss/nss_echauth.patch
+      
+      - name: Apply patch
+        run: |
+          cd nss-work/nss-repo
+          patch -p1 < ../../nss/nss_echauth.patch
+      
+      - name: Build NSS with ECH Auth
+        run: |
+          cd nss-work/nss-repo
+          ./build.sh --system-nspr
+      
+      - name: Run NSS interop tests (Python parser)
+        run: python3 nss/parse_test_vectors.py
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov
+      
+      - name: Generate Rust coverage
+        run: |
+          cd rust
+          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Generate Go coverage
+        run: |
+          cd go
+          go test -coverprofile=coverage.out ./...
