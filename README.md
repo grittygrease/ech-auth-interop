@@ -271,8 +271,8 @@ Policy extension for DNS HTTPS records:
 
 ```
 struct {
-    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
-    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
+    uint8 method;                          // 1 byte: 0=rpk, 1=pkix
+    SPKIHash trusted_keys<0..2^16-1>;     // N * 32-byte SHA-256 hashes
 } ECHAuthInfo;
 ```
 
@@ -282,17 +282,17 @@ Signature extension for TLS retry configs:
 
 ```
 struct {
-    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
-    uint64 not_after;                  // 8 bytes: Unix timestamp
-    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
-    SignatureScheme algorithm;         // 2 bytes
+    uint8 method;                          // 1 byte: 0=rpk, 1=pkix
+    uint64 not_after;                      // 8 bytes: Unix timestamp
+    opaque authenticator<1..2^16-1>;       // SPKI (RPK) or cert chain (PKIX)
+    SignatureScheme algorithm;             // 2 bytes
     opaque signature<1..2^16-1>;
-} ECHAuthRetry;
+} ECHAuth;
 ```
 
 **Key features:**
 - Policy (trusted_keys) separated from signature for DNS efficiency
-- `not_after` required for both RPK and PKIX (replay limiting independent of cert lifetime)
+- `not_after` required for both RPK and PKIX (replay limiting)
 - PKIX authenticator contains X.509 certificate chain in TLS 1.3 format
 
 ## Security Considerations
