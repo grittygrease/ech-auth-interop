@@ -159,12 +159,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("pkix", "ed25519") => {
             let signing_key = parse_ed25519_key(&key_data)?;
             let cert_chain = parse_cert_chain(&cert_chain_file.unwrap())?;
-            sign_pkix_ed25519(&ech_config_tbs, &signing_key, cert_chain)
+            sign_pkix_ed25519(
+                &ech_config_tbs,
+                &signing_key,
+                cert_chain,
+                not_after.unwrap(),
+            )
         }
         ("pkix", "ecdsa-p256") => {
             let signing_key = parse_ecdsa_key(&key_data)?;
             let cert_chain = parse_cert_chain(&cert_chain_file.unwrap())?;
-            sign_pkix_ecdsa(&ech_config_tbs, &signing_key, cert_chain)
+            sign_pkix_ecdsa(
+                &ech_config_tbs,
+                &signing_key,
+                cert_chain,
+                not_after.unwrap(),
+            )
         }
         _ => unreachable!(),
     };

@@ -178,6 +178,7 @@ func parseECHConfig(data []byte) (ECHConfig, int, error) {
 		return ECHConfig{}, 0, ErrConfigTruncated
 	}
 
+	var echAuthSeen bool
 	for offset < extEnd {
 		if offset+4 > extEnd {
 			return ECHConfig{}, 0, ErrConfigTruncated
@@ -194,6 +195,15 @@ func parseECHConfig(data []byte) (ECHConfig, int, error) {
 		ext.Data = make([]byte, extDataLen)
 		copy(ext.Data, data[offset:offset+extDataLen])
 		offset += extDataLen
+
+		// COMPLIANCE: Section 5.1 - ech_auth MUST be last extension if present
+		if echAuthSeen {
+			return ECHConfig{}, 0, fmt.Errorf("%w: ech_auth extension must be last (found extension 0x%04x after ech_auth)", ErrDecode, ext.Type)
+		}
+		if ext.Type == ECHAuthExtensionType {
+			echAuthSeen = true
+		}
+
 		config.Extensions = append(config.Extensions, ext)
 	}
 

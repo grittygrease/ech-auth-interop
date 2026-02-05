@@ -115,6 +115,20 @@ jobs:
       - name: Run NSS interop tests (Python parser)
         run: python3 nss/parse_test_vectors.py
 
+  interop:
+    name: Cross-Implementation Interop Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate test vector JSON
+        run: |
+          python3 -m json.tool test-vectors/interop.json > /dev/null
+          echo "✓ Test vectors are valid JSON"
+      
+      - name: Run interop test harness
+        run: python3 interop/harness.py --list
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest

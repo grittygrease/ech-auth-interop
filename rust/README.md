@@ -266,7 +266,7 @@ This includes:
 This implementation is compliant with draft-sullivan-tls-signed-ech-updates with:
 - ✅ Extension ordering validation (ech_auth must be last)
 - ✅ SAN matching for PKIX
-- ✅ PKIX not_after=0 enforcement
+- ✅ not_after timestamp validation (required for both RPK and PKIX per PR #2)
 - ✅ Downgrade attack prevention
 
 See [`COMPLIANCE.md`](../COMPLIANCE.md) for detailed compliance status.

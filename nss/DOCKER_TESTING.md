@@ -37,14 +37,14 @@ The Docker container:
 - NSS parses Rust-signed RPK configs
 - NSS parses Rust-signed PKIX configs
 - Verifies method detection (RPK vs PKIX)
-- Verifies PKIX `not_after=0` compliance
+- Validates not_after timestamp (replay protection)
 
 ### What's Validated
 
 **Success criteria for each test:**
 - Parse completes without errors (`SECSuccess`)
 - Method field correctly identifies RPK (0x00) or PKIX (0x01)
-- For PKIX: `notAfter` field is 0 (per draft spec)
+- For both RPK and PKIX: `notAfter` field contains valid future timestamp
 
 **This proves:**
 - Wire format compatibility between implementations

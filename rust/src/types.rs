@@ -7,10 +7,10 @@ pub const ECDSA_SECP256R1_SHA256: u16 = 0x0403;
 /// Spec version for wire format compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpecVersion {
-    /// PR #2 format: rpk=0, pkix=1, not_after required for PKIX
+    /// PR #2 format: rpk=0, pkix=1, not_after required for both RPK and PKIX
     #[default]
     PR2,
-    /// Published -00 draft: none=0, rpk=1, pkix=2, not_after=0 for PKIX
+    /// Published -00 draft: none=0, rpk=1, pkix=2, not_after=0 for PKIX (deprecated)
     Published,
 }
 

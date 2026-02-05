@@ -12,9 +12,9 @@ draft-sullivan-tls-signed-ech-updates.
 1. **Full PKIX Support**:
    - Certificate chain parsing (TLS 1.3 format: 24-bit length-prefixed)
    - Critical `id-pe-echConfigSigning` extension check (OID 1.3.6.1.5.5.7.1.99)
-   - SAN (Subject Alternative Name) matching against `public_name`
+   - SAN (Subject Alternative Name) matching against `public_name` via `CERT_VerifyCertName()`
    - Chain validation against NSS certificate database
-   - PKIX `not_after=0` compliance enforcement (per draft spec)
+   - not_after timestamp validation (replay protection per PR #2)
 
 2. **RPK Support**:
    - Ed25519 and ECDSA P-256 signature verification
@@ -64,8 +64,8 @@ Manual build: Apply the patch to NSS source and build with NSS's build system (s
 - **PKIX Support**: 
   - Certificate chain verification (RFC 8446 format)
   - `id-pe-echConfigSigning` extension check (must be critical)
-  - SAN matching against `public_name`
-  - `not_after=0` requirement enforcement
+  - SAN matching against `public_name` (`tls13_ExtractPublicName` + `CERT_VerifyCertName`)
+  - not_after timestamp validation (replay protection)
 - **Client API**: `SSL_SetEchAuthTrustAnchors`, `SSL_SignEchConfig`
 - **Automatic Verification**: Hooks into TLS handshake retry config processing
 
