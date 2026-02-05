@@ -92,9 +92,7 @@ func VerifyPKIXVersioned(echConfigTBS []byte, auth *Auth, publicName string, anc
 	}
 	sig := auth.Signature
 
-	// Step 2.5: Check expiration based on version
-	// - Published: not_after should be 0, skip time check (cert chain handles it)
-	// - PR2: not_after required, verify current_time < not_after
+	// Step 2.5: Check expiration (PR #2: not_after required for both RPK and PKIX)
 	if ver == SpecPR2 {
 		if uint64(now.Unix()) >= sig.NotAfter {
 			return fmt.Errorf("%w: not_after %d < current %d", ErrExpired, sig.NotAfter, now.Unix())

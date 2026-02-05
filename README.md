@@ -58,7 +58,7 @@ NSS is client-focused and doesn't implement signing (servers use Go/Rust).
   - Certificate chain parsing and validation
   - Critical `id-pe-echConfigSigning` extension check
   - SAN matching against public_name
-  - PKIX `not_after=0` compliance enforcement
+  - not_after timestamp validation for replay protection
 
 **Testing NSS Interop:**
 ```bash
@@ -223,19 +223,157 @@ cd go && go test -v
 
 ### Cross-Implementation Interop
 
+The `interop/` directory contains a standardized test harness for testing interoperability:
+
 ```bash
-# Generate test vector from Rust
-cd rust
-cargo run --bin gen-test-vector > ../test-vectors/vector.json
+# Run all interop tests
+python3 interop/harness.py
 
-# Verify in Go
-cd ../go
-go test -run TestInterop -v
+# List available test vectors
+python3 interop/harness.py --list
 
-# Verify with NSS client against Go server
-cd ../nss
-make test
+# Test specific implementation
+python3 interop/harness.py --impl rust
+
+# Verbose output
+python3 interop/harness.py -v
 ```
+
+Test vectors are in `test-vectors/interop.json` and include:
+- RPK and PKIX signatures from each implementation
+- Expected verification results
+- Trust anchors and timestamps
+
+Adding a new implementation:
+1. Create a verification CLI tool
+2. Register in `interop/harness.py`
+3. Generate test vectors with your signatures
+4. All implementations should verify each other's signatures
+
+See [`interop/README.md`](interop/README.md) for details.
+
+## Adding a New Implementation
+
+Want to add your TLS stack to the interop matrix? Here's how:
+
+### 1. Implement the Core Spec
+
+Implement ECH Auth signing and/or verification according to [draft-sullivan-tls-signed-ech-updates](https://datatracker.ietf.org/doc/draft-sullivan-tls-signed-ech-updates/):
+
+**Required:**
+- Wire format parsing (`ech_auth` and `ech_authinfo` extensions)
+- Signature verification (Ed25519 or ECDSA P-256)
+- SPKI hash computation (SHA-256)
+- Timestamp validation (`not_after` checks)
+
+**For PKIX support:**
+- X.509 certificate chain validation
+- Critical `id-pe-echConfigSigning` extension (1.3.6.1.5.5.7.1.99)
+- Subject Alternative Name (SAN) matching against `public_name`
+
+### 2. Create a CLI Verification Tool
+
+Provide a command-line tool with this interface:
+
+```bash
+your-tool verify \
+  --config signed.ech \
+  --time 1234567890 \
+  --trust-anchor <spki_hash_hex>
+```
+
+**Requirements:**
+- Read signed ECHConfig from file
+- Verify signature using provided trust anchor
+- Exit code 0 for success, non-zero for failure
+- Optional: Print error messages to stderr
+
+### 3. Generate Test Vectors
+
+Create signed ECHConfigs for the test suite:
+
+```bash
+# Generate signed configs
+your-tool sign --key ed25519.key --config base.ech --output yourstack_signed_rpk.ech
+your-tool sign --cert cert.pem --key key.pem --config base.ech --output yourstack_signed_pkix.ech
+
+# Copy to test vectors
+cp yourstack_signed_*.ech test-vectors/
+```
+
+Then update `interop/generate-vectors.py` to include your files:
+
+```python
+test_files = [
+    # ... existing entries ...
+    ("yourstack_signed_rpk.ech", "YourStack RPK signature verification", "yourstack"),
+    ("yourstack_signed_pkix.ech", "YourStack PKIX signature verification", "yourstack"),
+]
+```
+
+Regenerate JSON vectors:
+
+```bash
+python3 interop/generate-vectors.py > test-vectors/interop.json
+```
+
+### 4. Register in Test Harness
+
+Edit `interop/harness.py` and add to `discover_implementations()`:
+
+```python
+# Check for YourStack implementation
+if Path("yourstack/Makefile").exists():  # or whatever build file you have
+    impls.append(Implementation(
+        name="YourStack",
+        verify_cmd=["./yourstack-verify"],
+        working_dir="yourstack"
+    ))
+```
+
+### 5. Run Interop Tests
+
+```bash
+# Test your implementation verifies others' signatures
+python3 interop/harness.py --impl yourstack
+
+# Test others verify your signatures
+python3 interop/harness.py --test "YourStack"
+```
+
+All tests should pass, demonstrating full interoperability.
+
+### 6. Update Documentation
+
+Add your implementation to the interop matrix in this README:
+
+```markdown
+| Sign \ Verify | Rust | Go  | NSS | YourStack |
+|---------------|:----:|:---:|:---:|:---------:|
+| **Rust**      |  ✓   |  ✓  |  ✓  |     ✓     |
+| **Go**        |  ✓   |  ✓  |  ✓  |     ✓     |
+| **YourStack** |  ✓   |  ✓  |  ✓  |     ✓     |
+```
+
+### 7. Submit PR
+
+1. Create a directory for your implementation: `yourstack/`
+2. Include: source code, build instructions, README.md
+3. Ensure CI passes
+4. Submit pull request with:
+   - Your implementation
+   - Test vectors
+   - Updated harness registration
+   - Updated interop matrix
+
+### Need Help?
+
+- Check [`interop/README.md`](interop/README.md) for detailed examples
+- Review existing implementations in `rust/`, `go/`, `nss/`
+- See `COMPLIANCE.md` for spec MUST requirements
+- Open an issue for questions
+
+**Estimated time:** 1-2 days for basic interop, 1-2 weeks for full spec compliance.
 
 ## End-to-End TLS Test
 
@@ -256,59 +394,44 @@ This tests:
 
 ## Wire Format
 
-This implementation supports two spec versions with different wire formats:
+Implements the split-extension format from draft-sullivan-tls-signed-ech-updates.
 
 ### Method Encoding
 
-| Method | Published (-00) | PR #2 |
-|--------|-----------------|-------|
-| none   | 0               | —     |
-| rpk    | 1               | 0     |
-| pkix   | 2               | 1     |
+| Method | Value |
+|--------|-------|
+| rpk    | 0     |
+| pkix   | 1     |
 
-### Published (-00): Combined Structure
+### ech_authinfo Extension
 
-Single `ech_auth` extension used everywhere:
+Policy extension for DNS HTTPS records:
 
 ```
 struct {
-    ECHAuthMethod method;              // 1 byte: 0=none, 1=rpk, 2=pkix
-    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
-    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
-    uint64 not_after;                  // 8 bytes: MUST be 0 for PKIX
-    SignatureScheme algorithm;         // 2 bytes
+    uint8 method;                          // 1 byte: 0=rpk, 1=pkix
+    SPKIHash trusted_keys<0..2^16-1>;     // RPK only; zero-length if method=pkix
+} ECHAuthInfo;
+```
+
+### ech_auth Extension
+
+Signature extension for TLS retry configs:
+
+```
+struct {
+    uint8 method;                          // 1 byte: 0=rpk, 1=pkix
+    uint64 not_after;                      // 8 bytes: Unix timestamp
+    opaque authenticator<1..2^16-1>;       // SPKI (RPK) or cert chain (PKIX)
+    SignatureScheme algorithm;             // 2 bytes
     opaque signature<1..2^16-1>;
 } ECHAuth;
 ```
 
-For PKIX, `not_after` MUST be 0 (certificate validity governs expiration).
-
-### PR #2: Split Structure
-
-Two extensions with different purposes:
-
-**ech_authinfo** (policy, in DNS HTTPS record):
-```
-struct {
-    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
-    SPKIHash trusted_keys<0..2^16-1>;  // N * 32-byte SHA-256 hashes
-} ECHAuthInfo;
-```
-
-**ech_auth** (signature, in TLS retry configs):
-```
-struct {
-    ECHAuthMethod method;              // 1 byte: 0=rpk, 1=pkix
-    uint64 not_after;                  // 8 bytes: REQUIRED (even for PKIX)
-    opaque authenticator<1..2^16-1>;   // SPKI (RPK) or cert chain (PKIX)
-    SignatureScheme algorithm;         // 2 bytes
-    opaque signature<1..2^16-1>;
-} ECHAuthRetry;
-```
-
-Key PR #2 changes:
-- `not_after` is REQUIRED for PKIX (allows replay limiting independent of cert lifetime)
+**Key features:**
 - Policy (trusted_keys) separated from signature for DNS efficiency
+- `not_after` required for both RPK and PKIX (replay limiting)
+- PKIX authenticator contains X.509 certificate chain in TLS 1.3 format
 
 ## Security Considerations
 

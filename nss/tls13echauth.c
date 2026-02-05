@@ -347,6 +347,75 @@ static SECStatus tls13_MatchPublicName(CERTCertificate *cert,
 }
 #endif
 
+/* Extract public_name from ECHConfig raw bytes
+ * ECHConfig format:
+ *   uint16 version
+ *   uint16 length
+ *   uint8 config_id
+ *   uint16 kem_id
+ *   opaque public_key<1..2^16-1>
+ *   HpkeSymmetricCipherSuite cipher_suites<4..2^16-4>
+ *   uint8 maximum_name_length
+ *   opaque public_name<1..255>  <-- Extract this
+ *   ...
+ */
+static SECStatus tls13_ExtractPublicName(const SECItem *configRaw,
+                                         char **publicNameOut) {
+  if (!configRaw || !configRaw->data || configRaw->len < 4) {
+    return SECFailure;
+  }
+
+  const PRUint8 *data = configRaw->data;
+  unsigned int offset = 0;
+  
+  /* Skip version (2 bytes) and length (2 bytes) */
+  offset = 4;
+  
+  if (offset >= configRaw->len) return SECFailure;
+  
+  /* Skip config_id (1 byte) */
+  offset += 1;
+  
+  /* Skip kem_id (2 bytes) */
+  if (offset + 2 > configRaw->len) return SECFailure;
+  offset += 2;
+  
+  /* Skip public_key (2-byte length prefix + data) */
+  if (offset + 2 > configRaw->len) return SECFailure;
+  unsigned int pkLen = (data[offset] << 8) | data[offset + 1];
+  offset += 2;
+  if (offset + pkLen > configRaw->len) return SECFailure;
+  offset += pkLen;
+  
+  /* Skip cipher_suites (2-byte length prefix + data) */
+  if (offset + 2 > configRaw->len) return SECFailure;
+  unsigned int csLen = (data[offset] << 8) | data[offset + 1];
+  offset += 2;
+  if (offset + csLen > configRaw->len) return SECFailure;
+  offset += csLen;
+  
+  /* Skip maximum_name_length (1 byte) */
+  if (offset >= configRaw->len) return SECFailure;
+  offset += 1;
+  
+  /* Extract public_name (1-byte length prefix + data) */
+  if (offset >= configRaw->len) return SECFailure;
+  unsigned int nameLen = data[offset];
+  offset += 1;
+  if (offset + nameLen > configRaw->len) return SECFailure;
+  
+  /* Allocate and copy null-terminated string */
+  char *name = PORT_Alloc(nameLen + 1);
+  if (!name) {
+    return SECFailure;
+  }
+  PORT_Memcpy(name, data + offset, nameLen);
+  name[nameLen] = '\0';
+  
+  *publicNameOut = name;
+  return SECSuccess;
+}
+
 /* Check for ECH Config Signing extension in leaf cert */
 static SECStatus tls13_CheckEchExtension(CERTCertificate *cert) {
   /* Search for id-pe-echConfigSigning (1.3.6.1.5.5.7.1.99) by OID bytes */
@@ -429,9 +498,23 @@ static SECStatus tls13_VerifyEchAuthPKIX(sslSocket *ss,
 
   if (rv == SECSuccess) {
     /* 4. Match SAN against publicName */
-    /* TODO(NSS): Need proper accessor for config->publicName (SECItem -> char*) */
-    /* For now skip hostname validation - cert trust is already validated */
-    /* rv = tls13_MatchPublicName(leaf, (const char*)config->raw.data); */
+    char *publicName = NULL;
+    rv = tls13_ExtractPublicName(&config->raw, &publicName);
+    if (rv == SECSuccess && publicName) {
+      /* Verify certificate hostname matches public_name */
+      if (CERT_VerifyCertName(leaf, publicName) != SECSuccess) {
+        SSL_TRC(10, ("%d: TLS13[%d]: ECH Auth: SAN does not match public_name '%s'",
+                     SSL_GETPID(), ss->fd, publicName));
+        PORT_SetError(SSL_ERROR_BAD_CERT_DOMAIN);
+        rv = SECFailure;
+      }
+      PORT_Free(publicName);
+    } else {
+      /* Failed to extract public_name */
+      SSL_TRC(10, ("%d: TLS13[%d]: ECH Auth: failed to extract public_name",
+                   SSL_GETPID(), ss->fd));
+      rv = SECFailure;
+    }
   }
 
   CERT_DestroyCertificate(leaf);
@@ -497,14 +580,7 @@ SECStatus tls13_VerifyEchAuth(sslSocket *ss, const sslEchConfig *config,
       return SECFailure;
     }
   } else if (auth->method == ech_auth_method_pkix) {
-    /* COMPLIANCE: PKIX signatures MUST have not_after=0 per draft-sullivan */
-    if (auth->notAfter != 0) {
-      SSL_TRC(10, ("%d: TLS13[%d]: ECH Auth: PKIX not_after must be 0 (got %llu)",
-                   SSL_GETPID(), ss->fd, auth->notAfter));
-      PORT_SetError(SSL_ERROR_RX_MALFORMED_ECH_CONFIG);
-      return SECFailure;
-    }
-
+    /* Verify PKIX method */
     rv = tls13_VerifyEchAuthPKIX(ss, config, auth);
     if (rv != SECSuccess) {
       return rv;
@@ -699,8 +775,8 @@ SECStatus SSL_SignEchConfig(const SECItem *configOriginal, EchAuthMethod method,
   SECItem encodedAuth = {siBuffer, NULL, 0};
   SECItem tbs = {siBuffer, NULL, 0};
 
-  /* COMPLIANCE: PKIX signatures MUST have not_after=0 per draft-sullivan */
-  if (method == ech_auth_method_pkix && notAfter != 0) {
+  /* Validate notAfter is in the future */
+  if (notAfter == 0) {
     PORT_SetError(SEC_ERROR_INVALID_ARGS);
     return SECFailure;
   }

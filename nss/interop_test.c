@@ -91,7 +91,7 @@ void test_go_pkix_vector() {
   TEST("test_go_pkix_vector",
        rv == SECSuccess && 
        auth.method == ech_auth_method_pkix &&
-       auth.notAfter == 0);  // MUST be 0 for PKIX
+       auth.notAfter > 0);  // Must have valid timestamp per PR #2
   
   if (rv == SECSuccess) {
     tls13_DestroyEchAuthExtension(&auth);
@@ -138,7 +138,7 @@ void test_rust_pkix_vector() {
   TEST("test_rust_pkix_vector",
        rv == SECSuccess && 
        auth.method == ech_auth_method_pkix &&
-       auth.notAfter == 0);  // MUST be 0 for PKIX
+       auth.notAfter > 0);  // Must have valid timestamp per PR #2
   
   if (rv == SECSuccess) {
     tls13_DestroyEchAuthExtension(&auth);

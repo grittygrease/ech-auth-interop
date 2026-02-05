@@ -12,10 +12,12 @@
 /go/*.ech
 /go/*.pem
 
-# Test vectors (generated)
+# Test vectors (generated binaries, but keep JSON)
 /test-vectors/*.ech
 /test-vectors/*.der
 /test-vectors/*.hex
+/test-vectors/*.pem
+!/test-vectors/interop.json
 
 # IDE
 .idea/

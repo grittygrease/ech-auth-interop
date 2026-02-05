@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ECH Auth Test Vector",
+  "description": "Standardized test vectors for ECH Authentication interoperability",
+  "type": "object",
+  "required": ["version", "test_vectors"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Test vector format version (semantic versioning)"
+    },
+    "test_vectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "method", "test_type", "ech_config", "expected"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable test case name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional detailed description of what this tests"
+          },
+          "method": {
+            "type": "string",
+            "enum": ["rpk", "pkix"],
+            "description": "Authentication method"
+          },
+          "test_type": {
+            "type": "string",
+            "enum": ["valid", "invalid_signature", "invalid_expired", "invalid_not_yet_valid", "invalid_wrong_key", "invalid_malformed"],
+            "description": "Expected outcome of the test"
+          },
+          "ech_config": {
+            "type": "string",
+            "description": "Hex-encoded ECHConfig (without signature)"
+          },
+          "signing_key": {
+            "type": "object",
+            "description": "Private key for signing (optional, for implementations that generate signatures)",
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "enum": ["ed25519", "ecdsa_p256"]
+              },
+              "private_key_hex": {
+                "type": "string",
+                "description": "Hex-encoded private key (seed for Ed25519, raw scalar for ECDSA)"
+              },
+              "spki_hex": {
+                "type": "string",
+                "description": "Hex-encoded SubjectPublicKeyInfo"
+              }
+            }
+          },
+          "signature": {
+            "type": "object",
+            "required": ["algorithm", "not_after", "signature_hex"],
+            "properties": {
+              "algorithm": {
+                "type": "integer",
+                "description": "SignatureScheme value (0x0807 for Ed25519, 0x0403 for ECDSA P-256)"
+              },
+              "not_after": {
+                "type": "integer",
+                "description": "Unix timestamp for expiration"
+              },
+              "authenticator_hex": {
+                "type": "string",
+                "description": "Hex-encoded authenticator (SPKI for RPK, cert chain for PKIX)"
+              },
+              "signature_hex": {
+                "type": "string",
+                "description": "Hex-encoded signature bytes"
+              }
+            }
+          },
+          "verification": {
+            "type": "object",
+            "description": "Verification context",
+            "properties": {
+              "current_time": {
+                "type": "integer",
+                "description": "Unix timestamp for verification time"
+              },
+              "trust_anchors": {
+                "type": "object",
+                "properties": {
+                  "rpk_spki_hashes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Array of hex-encoded SHA-256 SPKI hashes for RPK"
+                  },
+                  "pkix_roots": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Array of hex-encoded root CA certificates for PKIX"
+                  }
+                }
+              }
+            }
+          },
+          "expected": {
+            "type": "object",
+            "required": ["valid"],
+            "properties": {
+              "valid": {
+                "type": "boolean",
+                "description": "Whether verification should succeed"
+              },
+              "error_contains": {
+                "type": "string",
+                "description": "Expected error message substring (if valid=false)"
+              },
+              "spki_hash_hex": {
+                "type": "string",
+                "description": "Expected SHA-256 SPKI hash (for RPK)"
+              },
+              "signed_ech_config_hex": {
+                "type": "string",
+                "description": "Expected hex-encoded signed ECHConfig (complete with signature extension)"
+              }
+            }
+          },
+          "source": {
+            "type": "string",
+            "description": "Implementation that generated this vector (rust/go/nss)"
+          }
+        }
+      }
+    }
+  }
+}

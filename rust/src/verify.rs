@@ -216,22 +216,12 @@ pub fn verify_pkix_versioned(
     // Step 2: Extract signature block
     let sig = ech_auth.signature.as_ref().ok_or(Error::SignatureMissing)?;
 
-    // Step 2.5: Check expiration based on version
-    // - Published: not_after must be 0 (skip validation)
-    // - PR2: not_after required, verify current_time < not_after
-    match version {
-        SpecVersion::Published => {
-            // Published spec: not_after should be 0, skip time check
-            // (certificate chain validation handles expiration)
-        }
-        SpecVersion::PR2 => {
-            if current_time >= sig.not_after {
-                return Err(Error::Expired {
-                    not_after: sig.not_after,
-                    current: current_time,
-                });
-            }
-        }
+    // Step 2.5: Check expiration (PR #2: not_after required for both RPK and PKIX)
+    if current_time >= sig.not_after {
+        return Err(Error::Expired {
+            not_after: sig.not_after,
+            current: current_time,
+        });
     }
 
     // Parse certificate chain from authenticator

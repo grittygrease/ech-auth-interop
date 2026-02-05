@@ -142,12 +142,14 @@ pub fn sign_rpk_ecdsa(
 /// * `ech_config_tbs` - The ECHConfig bytes with ech_auth.signature set to zero-length
 /// * `signing_key` - The private key (Ed25519 or ECDSA P-256)
 /// * `certificate_chain` - DER-encoded certificates (leaf first)
+/// * `not_after` - Expiration Unix timestamp (required per PR #2)
 ///
-/// For PKIX, not_after is always 0 (use certificate validity instead)
+/// Per PR #2, not_after is required for both RPK and PKIX
 pub fn sign_pkix_ed25519(
     ech_config_tbs: &[u8],
     signing_key: &SigningKey,
     certificate_chain: Vec<Vec<u8>>,
+    not_after: u64,
 ) -> ECHAuthSignature {
     // Build the authenticator (certificate chain)
     // Format: length-prefixed list of DER certificates
@@ -167,7 +169,7 @@ pub fn sign_pkix_ed25519(
 
     ECHAuthSignature {
         authenticator,
-        not_after: 0, // Use certificate validity
+        not_after, // Required timestamp per PR #2
         algorithm: ED25519_SIGNATURE_SCHEME,
         signature: signature.to_bytes().to_vec(),
     }
@@ -179,12 +181,14 @@ pub fn sign_pkix_ed25519(
 /// * `ech_config_tbs` - The ECHConfig bytes with ech_auth.signature set to zero-length
 /// * `signing_key` - ECDSA P-256 signing key
 /// * `certificate_chain` - DER-encoded certificates (leaf first)
+/// * `not_after` - Expiration Unix timestamp (required per PR #2)
 ///
-/// For PKIX, not_after is always 0 (use certificate validity instead)
+/// Per PR #2, not_after is required for both RPK and PKIX
 pub fn sign_pkix_ecdsa(
     ech_config_tbs: &[u8],
     signing_key: &EcdsaSigningKey,
     certificate_chain: Vec<Vec<u8>>,
+    not_after: u64,
 ) -> ECHAuthSignature {
     // Build the authenticator (certificate chain)
     // Format: length-prefixed list of DER certificates
@@ -211,7 +215,7 @@ pub fn sign_pkix_ecdsa(
 
     ECHAuthSignature {
         authenticator,
-        not_after: 0, // Use certificate validity
+        not_after, // Required timestamp per PR #2
         algorithm: ECDSA_SECP256R1_SHA256,
         signature: signature.to_vec(),
     }
@@ -305,11 +309,12 @@ mod tests {
         let ech_config_tbs = b"test config pkix";
         let cert = vec![0x30, 0x82, 0x01, 0x00]; // Dummy cert
         let chain = vec![cert.clone()];
+        let not_after = 2000000000; // Valid timestamp
 
-        let sig = sign_pkix_ed25519(ech_config_tbs, &signing_key, chain);
+        let sig = sign_pkix_ed25519(ech_config_tbs, &signing_key, chain, not_after);
 
         assert_eq!(sig.algorithm, ED25519_SIGNATURE_SCHEME);
-        assert_eq!(sig.not_after, 0); // PKIX uses certificate validity
+        assert_eq!(sig.not_after, not_after); // PR #2: not_after required
         assert!(sig.authenticator.len() > 0);
         assert_eq!(sig.signature.len(), 64);
     }
@@ -323,11 +328,12 @@ mod tests {
         let ech_config_tbs = b"test config pkix ecdsa";
         let cert = vec![0x30, 0x82, 0x01, 0x00]; // Dummy cert
         let chain = vec![cert.clone()];
+        let not_after = 2000000000; // Valid timestamp
 
-        let sig = sign_pkix_ecdsa(ech_config_tbs, &signing_key, chain);
+        let sig = sign_pkix_ecdsa(ech_config_tbs, &signing_key, chain, not_after);
 
         assert_eq!(sig.algorithm, ECDSA_SECP256R1_SHA256);
-        assert_eq!(sig.not_after, 0); // PKIX uses certificate validity
+        assert_eq!(sig.not_after, not_after); // PR #2: not_after required
         assert!(sig.authenticator.len() > 0);
         assert!(sig.signature.len() >= 64 && sig.signature.len() <= 72);
     }

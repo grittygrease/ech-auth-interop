@@ -27,32 +27,34 @@ Compliance analysis for draft-sullivan-tls-signed-ech-updates-00.
 
 | Requirement | Rust | Go | NSS |
 |-------------|:----:|:--:|:---:|
-| MUST include critical id-pe-echConfigSigning | ✓ | ✓ | ✗ |
-| MUST validate certificate chain | ✓ | ✓ | ⚠ |
-| MUST confirm SAN covers public_name | ⚠ | ✓ | ✗ |
-| MUST confirm critical extension presence | ✓ | ✓ | ✗ |
-| MUST verify signature with leaf key | ✓ | ✓ | ⚠ |
-| MUST NOT accept cert for TLS server auth | ✓ | ✓ | ✗ |
-| MUST set not_after=0 for PKIX | ✓ | ✓ | ✗ |
+| MUST include critical id-pe-echConfigSigning | ✓ | ✓ | ✓ |
+| MUST validate certificate chain | ✓ | ✓ | ✓ |
+| MUST confirm SAN covers public_name | ⚠ | ✓ | ✓ |
+| MUST confirm critical extension presence | ✓ | ✓ | ✓ |
+| MUST verify signature with leaf key | ✓ | ✓ | ✓ |
+| MUST NOT accept cert for TLS server auth | ✓ | ✓ | ✓ |
+| MUST verify not_after > current_time | ✓ | ✓ | ✓ |
 
 **Notes:**
-- Go: `VerifyPKIX()` checks `auth.Method == MethodPKIX` and `auth.NotAfter != 0`
-- Rust: Uses webpki for chain validation
-- NSS: PKIX not implemented yet
+- PR #2: not_after is required for both RPK and PKIX (provides replay protection)
+- Rust: Uses webpki for chain validation, SAN check only validates extension presence
+- Go: Full PKIX implementation with complete SAN matching
+- NSS: Full PKIX implementation with `tls13_ExtractPublicName()` and `CERT_VerifyCertName()`
 
 ## Section 5.1: ECH Authentication Extension
 
 | Requirement | Rust | Go | NSS |
 |-------------|:----:|:--:|:---:|
-| MUST place ech_auth last in extensions | ✗ | ✗ | ✗ |
-| MUST reject if ech_auth not last | ✗ | ✗ | ✗ |
+| MUST place ech_auth last in extensions | ✓ | ✓ | ✗ |
+| MUST reject if ech_auth not last | ✓ | ✓ | ✗ |
 | MUST have ≥1 hash if method=rpk | ✓ | ✓ | ⚠ |
 | MUST have zero-length trusted_keys otherwise | ✓ | ✓ | ⚠ |
 | MUST verify before installing ECHConfig | ✓ | ✓ | ⚠ |
 
-**KNOWN GAPS:**
-- **Extension ordering**: None of the implementations enforce ech_auth being last
-- This is a MUST in section 5.1
+**Notes:**
+- Rust: Extension ordering validated in `validate_extension_ordering()` with tests
+- Go: Extension ordering validated in `parseECHConfig()` as of this PR
+- NSS: Extension ordering not implemented yet
 
 ## Section 5.1.1: Signature Computation
 
@@ -99,17 +101,14 @@ Compliance analysis for draft-sullivan-tls-signed-ech-updates-00.
 
 ### Critical Gaps (MUST violations)
 
-1. **Extension ordering (Section 5.1)**
-   - All implementations: Do not enforce ech_auth being last
-   - Fix required in `Encode()` and `Decode()` functions
+1. **Extension ordering in NSS**
+   - NSS C code doesn't validate ech_auth is last
+   - Should be added to NSS patch
 
-2. **NSS PKIX support**
-   - Not implemented (RPK only)
+### Partial Implementations (⚠️)
 
-### Partial Implementations
-
-1. **NSS**: All verification is scaffolding (not compiled/tested against real NSS)
-2. **SAN matching**: Rust doesn't enforce SAN covers public_name
+1. **Rust SAN matching**: Checks extension presence but doesn't parse contents
+2. **NSS testing**: Not fully integrated into CI (requires NSS build environment)
 
 ### Test Coverage
 
@@ -125,12 +124,17 @@ Compliance analysis for draft-sullivan-tls-signed-ech-updates-00.
 | PKIX critical extension check | ✓ | ✓ |
 | PKIX expired cert rejection | ✓ | ✓ |
 | PKIX untrusted root rejection | ✓ | ✓ |
+| Extension ordering enforcement | ✓ | ✓ |
 | E2E TLS handshake | - | ✓ |
 | E2E ECH rejection/retry | - | ✓ |
 
+**Test counts:**
+- Go: 117 tests (4 new extension ordering tests)
+- Rust: 54 tests
+
 ## Recommendations
 
-1. **Fix extension ordering**: Add checks in decode to verify ech_auth is last
-2. **Complete NSS**: Apply patch, build, run against Go server
-3. **Add SAN check to Rust**: Verify public_name matches certificate SAN
+1. **NSS extension ordering**: Add validation in C code that ech_auth must be last
+2. **Improve Rust SAN matching**: Parse SAN contents and match against public_name
+3. **NSS CI integration**: Add Docker-based NSS tests to GitHub Actions
 4. **Interop harness**: Create CLI-based test matrix runner

@@ -322,6 +322,107 @@ func TestParseECHConfig_WithExtensions(t *testing.T) {
 }
 
 // =============================================================================
+// EXTENSION ORDERING TESTS (Section 5.1 MUST requirement)
+// =============================================================================
+
+func TestParseECHConfig_EchAuthMustBeLast(t *testing.T) {
+	// Test that ech_auth extension must be last - this should PASS
+	extensions := []Extension{
+		{Type: 0x1234, Data: []byte("other extension")},
+		{Type: ECHAuthExtensionType, Data: []byte{0x00}}, // ech_auth last - valid
+	}
+	config := buildTestECHConfig(t, 1, "example.com", extensions)
+	list := buildECHConfigList(config)
+
+	configs, err := ParseECHConfigList(list)
+	if err != nil {
+		t.Fatalf("unexpected error when ech_auth is last: %v", err)
+	}
+
+	if len(configs[0].Extensions) != 2 {
+		t.Errorf("expected 2 extensions, got %d", len(configs[0].Extensions))
+	}
+
+	// ech_auth should be the last extension
+	lastExt := configs[0].Extensions[len(configs[0].Extensions)-1]
+	if lastExt.Type != ECHAuthExtensionType {
+		t.Errorf("ech_auth should be last extension, got 0x%04x", lastExt.Type)
+	}
+}
+
+func TestParseECHConfig_EchAuthNotLast(t *testing.T) {
+	// Test that ech_auth NOT being last should FAIL
+	extensions := []Extension{
+		{Type: ECHAuthExtensionType, Data: []byte{0x00}}, // ech_auth NOT last - invalid
+		{Type: 0x1234, Data: []byte("extension after ech_auth")},
+	}
+	config := buildTestECHConfig(t, 1, "example.com", extensions)
+	list := buildECHConfigList(config)
+
+	_, err := ParseECHConfigList(list)
+	if err == nil {
+		t.Fatal("expected error when ech_auth is not last, got nil")
+	}
+
+	if !errors.Is(err, ErrDecode) {
+		t.Errorf("expected ErrDecode, got %v", err)
+	}
+
+	errMsg := err.Error()
+	if !bytes.Contains([]byte(errMsg), []byte("must be last")) {
+		t.Errorf("error should mention 'must be last', got: %v", err)
+	}
+}
+
+func TestParseECHConfig_EchAuthOnly(t *testing.T) {
+	// Test ech_auth as the ONLY extension - should be valid
+	extensions := []Extension{
+		{Type: ECHAuthExtensionType, Data: []byte{0x00}},
+	}
+	config := buildTestECHConfig(t, 1, "example.com", extensions)
+	list := buildECHConfigList(config)
+
+	configs, err := ParseECHConfigList(list)
+	if err != nil {
+		t.Fatalf("unexpected error with ech_auth as only extension: %v", err)
+	}
+
+	if len(configs[0].Extensions) != 1 {
+		t.Errorf("expected 1 extension, got %d", len(configs[0].Extensions))
+	}
+
+	if configs[0].Extensions[0].Type != ECHAuthExtensionType {
+		t.Errorf("expected ech_auth extension, got 0x%04x", configs[0].Extensions[0].Type)
+	}
+}
+
+func TestParseECHConfig_NoEchAuth(t *testing.T) {
+	// Test config with other extensions but NO ech_auth - should be valid
+	extensions := []Extension{
+		{Type: 0x1234, Data: []byte("extension 1")},
+		{Type: 0x5678, Data: []byte("extension 2")},
+	}
+	config := buildTestECHConfig(t, 1, "example.com", extensions)
+	list := buildECHConfigList(config)
+
+	configs, err := ParseECHConfigList(list)
+	if err != nil {
+		t.Fatalf("unexpected error with no ech_auth extension: %v", err)
+	}
+
+	if len(configs[0].Extensions) != 2 {
+		t.Errorf("expected 2 extensions, got %d", len(configs[0].Extensions))
+	}
+
+	// Verify no ech_auth extension present
+	for _, ext := range configs[0].Extensions {
+		if ext.Type == ECHAuthExtensionType {
+			t.Error("should not have ech_auth extension")
+		}
+	}
+}
+
+// =============================================================================
 // SIGNATURE VERIFICATION TESTS
 // =============================================================================
 

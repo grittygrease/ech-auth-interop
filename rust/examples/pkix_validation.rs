@@ -18,7 +18,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("  • Leaf certificate must have critical id-pe-echConfigSigning extension");
     println!("  • Certificate SAN must match ECH config public_name");
     println!("  • Chain must validate against provided trust anchors");
-    println!("  • PKIX signatures MUST have not_after=0 (cert validity governs expiration)");
+    println!("  • not_after timestamp required for replay protection (PR #2)");
 
     // Step 1: Setup (in production, you'd have real certificates)
     println!("\n=== Step 1: Certificate Setup ===");
@@ -51,17 +51,23 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Step 3: Sign with PKIX method
     println!("\n=== Step 3: Sign Config (PKIX Method) ===");
 
-    // IMPORTANT: PKIX signatures always have not_after=0 (certificate validity governs expiration)
+    // Per PR #2: not_after is required for both RPK and PKIX (replay protection)
+    let current_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let not_after = current_time + 86400; // Valid for 24 hours
 
     let sig = sign_pkix_ed25519(
         &config.encode(),
         &signing_key,
         vec![certificate_der.clone()],
+        not_after,
     );
 
     println!("✓ Config signed with PKIX");
     println!("  Algorithm: 0x{:04x} (Ed25519)", sig.algorithm);
-    println!("  not_after: {} (MUST be 0 for PKIX)", sig.not_after);
+    println!("  not_after: {} (Unix timestamp)", sig.not_after);
     println!("  Certificate chain: {} bytes", sig.authenticator.len());
 
     // Step 4: Create auth extension
@@ -104,8 +110,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("PKIX (Certificate Chain):");
     println!("  • Full X.509 certificate validation");
     println!("  • Leverages existing PKI");
-    println!("  • Certificate validity controls expiration");
-    println!("  • not_after MUST be 0");
+    println!("  • not_after provides replay protection (PR #2)");
     println!("  • Requires id-pe-echConfigSigning extension");
 
     println!("\n=== Summary ===");
@@ -114,8 +119,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("  • Certificate rotation via CA");
     println!("  • Standard WebPKI validation");
     println!("  • Enterprise-grade trust chains");
-    println!("\nUse sign_pkix_ed25519() or sign_pkix_ecdsa() for PKIX signing.");
-    println!("Always pass not_after=0 for PKIX (enforced by the library).");
+    println!(
+        "\nUse sign_pkix_ed25519() or sign_pkix_ecdsa() with valid not_after for PKIX signing."
+    );
 
     Ok(())
 }

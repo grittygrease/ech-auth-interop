@@ -215,7 +215,7 @@
 //! This implementation is fully compliant with draft-sullivan-tls-signed-ech-updates:
 //! - ✅ Extension ordering validation (Section 5.1)
 //! - ✅ SAN matching for PKIX
-//! - ✅ PKIX not_after=0 enforcement
+//! - ✅ not_after timestamp validation (PR #2: required for both RPK and PKIX)
 //! - ✅ Trust model with DNS confirmation
 //! - ✅ Downgrade attack prevention
 

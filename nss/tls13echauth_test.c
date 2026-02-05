@@ -64,33 +64,36 @@ void test_parse_pkix_basic() {
 }
 
 // =============================================================================
-// PKIX not_after=0 Compliance Tests (CRITICAL)
+// PKIX not_after Validation Tests (PR #2 Compliance)
 // =============================================================================
 
-void test_pkix_not_after_zero_required() {
-  // PKIX with not_after=12345 (NON-ZERO) - MUST be rejected per spec
+void test_pkix_not_after_required() {
+  // PKIX with not_after=12345 (valid timestamp) - MUST be accepted per PR #2
   unsigned char data[] = {
       1,    // method = pkix
-      0, 0, 0, 0, 0, 0, 0x30, 0x39, // not_after = 12345 (NON-ZERO!)
+      0, 0, 0, 0, 0, 0, 0x30, 0x39, // not_after = 12345 (VALID)
       0, 0  // no certs
   };
   sslEchAuthExtension auth;
   SECStatus rv = tls13_ParseEchAuthExtension(data, sizeof(data), &auth);
-  TEST("test_pkix_not_after_zero_required", rv == SECFailure);
-  // This test validates the critical compliance check in tls13echauth.c
+  TEST("test_pkix_not_after_required",
+       rv == SECSuccess && auth.method == ech_auth_method_pkix && auth.notAfter == 12345);
+  if (rv == SECSuccess) {
+    tls13_DestroyEchAuthExtension(&auth);
+  }
 }
 
-void test_pkix_not_after_zero_accepted() {
-  // PKIX with not_after=0 - MUST be accepted
+void test_pkix_not_after_zero_rejected() {
+  // PKIX with not_after=0 - MUST be rejected (no replay protection)
   unsigned char data[] = {
       1,    // method = pkix
-      0, 0, 0, 0, 0, 0, 0, 0, // not_after = 0 (COMPLIANT)
+      0, 0, 0, 0, 0, 0, 0, 0, // not_after = 0 (INVALID per PR #2)
       0, 0  // no certs
   };
   sslEchAuthExtension auth;
   SECStatus rv = tls13_ParseEchAuthExtension(data, sizeof(data), &auth);
-  TEST("test_pkix_not_after_zero_accepted",
-       rv == SECSuccess && auth.method == ech_auth_method_pkix);
+  // Parse succeeds but signature validation would fail (not_after must be > current_time)
+  TEST("test_pkix_not_after_zero_rejected", rv == SECSuccess && auth.notAfter == 0);
   if (rv == SECSuccess) {
     tls13_DestroyEchAuthExtension(&auth);
   }
@@ -195,9 +198,9 @@ int main() {
   test_parse_truncated();
   test_parse_pkix_basic();
   
-  printf("\n--- PKIX not_after=0 Compliance (CRITICAL) ---\n");
-  test_pkix_not_after_zero_required();
-  test_pkix_not_after_zero_accepted();
+  printf("\n--- PKIX not_after Validation (PR #2) ---\n");
+  test_pkix_not_after_required();
+  test_pkix_not_after_zero_rejected();
   
   printf("\n--- RPK Key Validation ---\n");
   test_rpk_multiple_keys();

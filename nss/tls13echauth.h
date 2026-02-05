@@ -100,12 +100,12 @@ SECStatus SSL_ComputeSpkiHash(const SECKEYPublicKey *pubKey, PRUint8 *hashOut);
  * privKey: Private key for signing
  * authenticator: SPKI (for RPK) or Cert Chain (for PKIX)
  * algorithm: Signature algorithm (Ed25519 or P-256)
- * notAfter: Expiration timestamp (MUST be 0 for PKIX)
+ * notAfter: Expiration timestamp (required, must be > 0)
  * signedConfigOut: Buffer to receive the full signed ECHConfig (caller must
  * free)
  *
- * COMPLIANCE NOTE: For PKIX method, notAfter MUST be 0. Certificate validity
- * governs expiration. Function returns SECFailure if notAfter != 0 for PKIX.
+ * COMPLIANCE NOTE: notAfter is required for both RPK and PKIX per PR #2.
+ * Provides replay protection. Function returns SECFailure if notAfter == 0.
  */
 SECStatus SSL_SignEchConfig(const SECItem *configOriginal, EchAuthMethod method,
                             SECKEYPrivateKey *privKey,
